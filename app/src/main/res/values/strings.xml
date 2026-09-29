@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">YT2MP3</string>
+    <string name="notif_channel_name">Downloads</string>
+    <string name="notif_channel_desc">Shows YT2MP3 download progress</string>
+    <string name="notif_downloading">Downloading</string>
+    <string name="notif_preparing">Preparing download…</string>
+    <string name="notif_complete">Download complete: %1$s</string>
+    <string name="notif_failed">Download failed: %1$s</string>
+    <string name="cancel">Cancel</string>
+</resources>

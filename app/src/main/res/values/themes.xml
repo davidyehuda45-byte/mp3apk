@@ -1,0 +1,13 @@
+<resources>
+    <!-- Splash theme: native SplashScreen API only, no fake loading (§11).
+         Icon + background only; no slogan, progress, or animation-heavy art. -->
+    <style name="Theme.YT2MP3.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenAnimationDuration">400</item>
+        <item name="postSplashScreenTheme">@style/Theme.YT2MP3</item>
+    </style>
+    <style name="Theme.YT2MP3" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

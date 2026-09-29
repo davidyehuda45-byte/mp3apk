@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Original minimal mark: three ascending bars in a rounded square.
+         No play button, headphone, note, or platform mimicry (§47). -->
+    <path android:fillColor="#101314" android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M34,70v-18a4,4 0 0 1 4,-4h0a4,4 0 0 1 4,4v18a4,4 0 0 1 -4,4h0a4,4 0 0 1 -4,-4z" />
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M50,70V44a4,4 0 0 1 4,-4h0a4,4 0 0 1 4,4v26a4,4 0 0 1 -4,4h0a4,4 0 0 1 -4,-4z" />
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M66,70V56a4,4 0 0 1 4,-4h0a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4h0a4,4 0 0 1 -4,-4z" />
+</vector>
