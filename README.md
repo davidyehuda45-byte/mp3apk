@@ -1,89 +1,70 @@
-# YT2MP3 — Personal YouTube-to-MP3 Downloader
+# YT2MP3
 
-Direct-APK Android app (Kotlin, Compose, MVVM). Paste/share a URL → preview →
-choose quality → foreground download → MP3 with ID3 → SAF folder (SD card OK) →
-history. Engine (yt-dlp via youtubedl-android + FFmpeg) runs fully on-device;
-no backend, no accounts, no ads.
+An Android app for saving the audio of YouTube videos as MP3 files. Everything runs on your phone. There is no server, no account, and no ads.
 
-## Legal boundaries (PRD §1.2)
+## How it works
 
-Use only for content you own or are permitted to save. The app:
+Paste a video link, or share it straight from the YouTube app using the Share menu. The app shows a preview of the video, you pick an audio quality, and the download starts. The result is an MP3 file with ID3 tags, saved to a folder you choose, including an SD card. Every download is recorded in the history screen.
 
-- does not bypass DRM or access controls (restricted/private content surfaces
-  an error, never a credential prompt or bypass);
-- does not strip or fake ownership metadata (source URL is kept in history/ID3);
-- never sends your URLs to an app server (engine update check hits only the
-  configured release API over HTTPS).
+To fetch and convert the audio, the app uses yt-dlp (through youtubedl-android) and FFmpeg, both running directly on the device.
 
-## Build
+## Features
 
-Requirements: JDK 17, Android SDK (compileSdk 34), internet for first Gradle sync.
+- Accepts links from the Share menu or the clipboard
+- Selectable audio quality (bitrate)
+- A download queue that runs one item at a time and picks up again after the app is killed
+- Destination folder chosen through the Storage Access Framework, so no broad storage permission is needed
+- Filename collisions become `Song (1).mp3`, and existing files are never overwritten
+- Download history with details, retry, and per-entry delete
+- In-app yt-dlp updates, with automatic rollback if an update fails
+- Light and dark themes
 
-```powershell
-$env:JAVA_HOME="C:\Program Files\Java\jdk-17.0.12"
-.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest
+## Acceptable use
+
+Only use this app for content you own or are allowed to save. The app:
+
+- does not bypass DRM or any access control. Private or restricted videos produce an error message, never a login prompt.
+- does not remove or fake ownership information. The source URL is kept in the history and in the ID3 tags.
+- does not send the links you download to any server. Apart from YouTube itself, the only network request is the engine update check, made over HTTPS.
+
+You are responsible for how you use it, including following the terms of service of the platforms involved.
+
+## Building from source
+
+Requirements: JDK 17, Android SDK (compileSdk 34), and an internet connection for the first Gradle sync.
+
+```
+# Linux / macOS
+./gradlew :app:assembleDebug
+
+# Windows
+gradlew.bat :app:assembleDebug
 ```
 
-Verified: `assembleDebug`, `assembleRelease` (R8 + release lint), and 11 unit
-tests pass. Debug APK is ~255 MB
-(it bundles Python + FFmpeg + yt-dlp natives for all ABIs; use ABI splits
-per `app/build.gradle.kts` for a smaller release APK).
+Run the unit tests:
 
-Release:
-
-```powershell
-.\gradlew.bat :app:assembleRelease
-# signing: configure keystore in app/build.gradle.kts before store release
+```
+./gradlew :app:testDebugUnitTest
 ```
 
-Run unit tests:
+The debug APK is around 255 MB because it bundles Python, FFmpeg, and the yt-dlp binaries for every CPU architecture. For a release build, enable ABI splits in `app/build.gradle.kts` to bring the size down considerably. Configure a signing keystore in the same file before building a release APK:
 
-```powershell
-.\gradlew.bat :app:testDebugUnitTest
+```
+./gradlew :app:assembleRelease
 ```
 
-## Design system (PRD v1.1)
+## Project structure
 
-Quiet-confidence visual language, centralized tokens, no decorative effects:
+The project is written in Kotlin with Jetpack Compose and follows an MVVM layout. Room stores the queue and history, and Coil loads thumbnails.
 
-- `ui/theme/Theme.kt` — restrained Material 3 palettes (near-white light,
-  deep-neutral dark, single emerald accent), 3 shape sizes, plain type scale
-- `ui/theme/Spacing.kt` — `AppSpacing` tokens (no ad-hoc margins)
-- `ui/theme/Motion.kt` — `AppMotion` durations (150/220/350ms) + easings,
-  `rememberReducedMotion()` (animator-scale = 0 collapses decorative motion)
-- Native Splash Screen API, original 3-bar mark (no platform mimicry)
-- Home: delayed loading indicator (300ms grace), preview fade + 8dp rise,
-  Paste→Pasted feedback, segmented quality, destination-change flash,
-  primary button states (Preparing / Downloading % / Converting / Completed)
-- Downloads: Current + Queue hierarchy, smoothed real progress, cancel dialog
-- History: Today/Yesterday grouping, compact rows, entry-only delete,
-  tap → detail bottom sheet (metadata + Retry/Delete, §31)
-- Rules enforced: no emoji, no gradients/glow/shimmer-everywhere/confetti,
-  progress always from real data
-- Errors carry a Try again action (§41); empty states link back to Home (§40)
-- Low-RAM devices automatically use reduced motion (§44); list thumbnails
-  are size-aware Coil requests (~112px) so lists never hold full-res
-  bitmaps (§45)
+- `domain/model` holds the data models: `AudioQuality`, `DownloadStatus`, `VideoMetadata`, and `AppError`
+- `domain/usecase` holds the logic for fetching metadata, starting, canceling, and retrying downloads, and updating the engine
+- `data/engine` wraps yt-dlp, including a fake version for tests and the engine version manager
+- `data/storage` handles saving through SAF and writing ID3 tags
+- `data/queue` holds the queue runner, which keeps one download active at a time
+- `service` holds the foreground service that runs downloads
+- `ui` holds the Home, Downloads, History, and Settings screens
 
-## Project map (PRD §26)
+## License
 
-- `domain/model` — `AudioQuality` (single bitrate source), `DownloadStatus`
-  state machine, `VideoMetadata`, `AppError` categories
-- `domain/usecase` — fetch metadata, start/cancel/retry, engine update
-- `data/engine` — `YtDlpEngine` (+`FakeYtDlpEngine`), `EngineVersionManager`
-- `data/storage` — SAF `StorageManager`, `Id3Writer`
-- `data/queue` — sequential `QueueRunner` (one active item)
-- `service` — `DownloadForegroundService` + `yt2mp3_downloads` channel
-- `ui` — Home / Downloads / History / Settings + bottom navigation
-
-## Key behaviors
-
-- Share Sheet (`ACTION_SEND text/plain`) works on cold start, foreground, and
-  background (`singleTop` + `onNewIntent`); surrounding prose is tolerated.
-- Storage is SAF-only (`ACTION_OPEN_DOCUMENT_TREE`, persistable permission);
-  no broad storage permission, no hard-coded `/storage/...` paths.
-- Temp files stay in app cache until the MP3 is finished, then copied to the
-  user tree; collisions become `Song (1).mp3`, never silent overwrite.
-- Progress is real or indeterminate — never faked.
-- Queue + history persist in Room; queue resumes after process restart.
-- Engine update validates before activating and rolls back on failure.
+Not yet specified.
