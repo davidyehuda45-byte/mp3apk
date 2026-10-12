@@ -533,7 +533,7 @@ class SettingsViewModel(app: Application) : ViewModel() {
 
     fun diagnostics(): String {
         return buildString {
-            appendLine("YT2MP3 1.4.0")
+            appendLine("YT2MP3 ${com.example.yt2mp3.BuildConfig.VERSION_NAME}")
             appendLine("Engine: ${engineVersion ?: "?"}")
             appendLine("Tujuan: ${destination.value?.takeLast(40) ?: "-"}")
             appendLine("Output: ${mediaKind.value}/${format.value.label} ${quality.value.label} / " +
@@ -945,7 +945,7 @@ fun SettingsScreen(
             if (section == SettingsSection.LEGAL) {
             Section("Legal")
             Text(
-                "YT2MP3 1.4.0 — hanya konten publik yang boleh disimpan untuk offline pribadi. " +
+                "YT2MP3 ${com.example.yt2mp3.BuildConfig.VERSION_NAME} — hanya konten publik yang boleh disimpan untuk offline pribadi. " +
                     "Tanpa login/cookies: konten privat, berbayar, dan DRM tidak didukung dan tidak di-bypass. " +
                     "Tanpa watermark stripping. Patuhi syarat layanan tiap situs.",
                 style = MaterialTheme.typography.bodySmall,
@@ -992,7 +992,7 @@ fun SettingsScreen(
     if (showChangelog) {
         AlertDialog(
             onDismissRequest = { showChangelog = false },
-            title = { Text("Changelog 1.4.0") },
+            title = { Text("Changelog ${com.example.yt2mp3.BuildConfig.VERSION_NAME}") },
             text = {
                 Text(
                     "• Video MP4/MKV/WEBM 144p–4K\n" +
