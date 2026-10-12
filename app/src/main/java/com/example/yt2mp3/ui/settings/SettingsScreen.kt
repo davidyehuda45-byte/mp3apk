@@ -951,6 +951,12 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(
+                "Lisensi MIT (lihat LICENSE di repo). Komponen pihak ketiga " +
+                    "(yt-dlp, FFmpeg, AndroidX) ikut lisensinya masing-masing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             }
         }
     }

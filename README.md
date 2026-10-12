@@ -74,6 +74,12 @@ Jalankan unit test:
 .\gradlew.bat :app:testDebugUnitTest
 ```
 
+## Lisensi
+
+Kode aplikasi YT2MP3 berlisensi **MIT** — lihat file `LICENSE`. Bebas dipakai,
+diubah, dan disebarkan dengan mencantumkan copyright. Komponen pihak ketiga
+(yt-dlp, youtubedl-android, FFmpeg, AndroidX) ikut lisensinya masing-masing.
+
 ## Sistem desain
 
 Bahasa visual yang tenang, token terpusat, tanpa efek dekoratif:
