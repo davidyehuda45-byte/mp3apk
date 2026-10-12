@@ -37,8 +37,15 @@ class UrlValidatorTest {
     }
 
     @Test fun rejectsUnsupportedHost() {
-        assertNull(UrlValidator.extractFirstSupportedUrl("https://example.com/video"))
-        assertFalse(UrlValidator.isSupported("https://example.com/video"))
+        // Fase 1 generic: any http(s) URL is attempted by yt-dlp; truly unknown
+        // hosts fail downstream as UNSUPPORTED_URL/EXTRACTOR_ERROR, not here.
+        assertEquals(
+            "https://example.com/video",
+            UrlValidator.extractFirstSupportedUrl("https://example.com/video"),
+        )
+        assertTrue(UrlValidator.isSupported("https://example.com/video"))
+        assertTrue(UrlValidator.isSupported("https://www.tiktok.com/@x/video/1"))
+        assertNull(UrlValidator.extractFirstSupportedUrl("not a url at all"))
     }
 
     @Test fun stripsSiTrackingParam() {
@@ -67,8 +74,15 @@ class UrlValidatorTest {
     }
 
     @Test fun rejectsPlaylistAndChannel() {
-        assertNull(UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/playlist?list=PL123"))
-        assertNull(UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/@somechannel"))
+        // Playlist/channel pages surface via extractPlaylistUrl / InputParser.Playlist.
+        assertEquals(
+            "https://www.youtube.com/playlist?list=PL123",
+            UrlValidator.extractPlaylistUrl("https://www.youtube.com/playlist?list=PL123"),
+        )
+        // Channel pages are listable: routed to the playlist flow, not single-video.
+        assertTrue(
+            UrlValidator.extractAllSupportedUrls("https://www.youtube.com/@somechannel").isNotEmpty(),
+        )
         assertNull(UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/"))
     }
 }
@@ -96,6 +110,24 @@ class QualityMappingTest {
         assertEquals(AudioQuality.Q192, AudioQuality.DEFAULT)
         assertEquals(AudioQuality.Q192, AudioQuality.fromBitrate(999))
         assertEquals(AudioQuality.Q320, AudioQuality.fromBitrate(320))
+    }
+
+    @Test fun formatFlags() {
+        assertEquals(com.example.yt2mp3.domain.model.AudioFormat.MP3, com.example.yt2mp3.domain.model.AudioFormat.DEFAULT)
+        assertTrue(com.example.yt2mp3.domain.model.AudioFormat.MP3.usesQuality)
+        assertTrue(com.example.yt2mp3.domain.model.AudioFormat.OPUS.usesQuality)
+        assertTrue(com.example.yt2mp3.domain.model.AudioFormat.OGG.usesQuality)
+        assertFalse(com.example.yt2mp3.domain.model.AudioFormat.M4A.usesQuality)
+        assertFalse(com.example.yt2mp3.domain.model.AudioFormat.FLAC.usesQuality)
+        assertFalse(com.example.yt2mp3.domain.model.AudioFormat.WAV.usesQuality)
+        assertEquals("opus", com.example.yt2mp3.domain.model.AudioFormat.OPUS.ytdlpFormat)
+        assertEquals("vorbis", com.example.yt2mp3.domain.model.AudioFormat.OGG.ytdlpFormat)
+    }
+
+    @Test fun siteNames() {
+        assertEquals("YouTube", com.example.yt2mp3.data.util.SupportedSites.siteNameForUrl("https://youtu.be/abc123"))
+        assertEquals("TikTok", com.example.yt2mp3.data.util.SupportedSites.siteNameForUrl("https://www.tiktok.com/@x/video/1"))
+        assertEquals("SoundCloud", com.example.yt2mp3.data.util.SupportedSites.siteNameForUrl("https://soundcloud.com/a/b"))
     }
 }
 

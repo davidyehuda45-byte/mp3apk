@@ -71,10 +71,16 @@ object DownloadNotifications {
         return builder.build()
     }
 
-    fun finished(context: Context, title: String, ok: Boolean): Notification {
+    fun finished(
+        context: Context,
+        title: String,
+        ok: Boolean,
+        openUri: String? = null,
+        mime: String? = null,
+    ): Notification {
         val text = if (ok) context.getString(R.string.notif_complete, title)
         else context.getString(R.string.notif_failed, title)
-        return NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(
                 if (ok) android.R.drawable.stat_sys_download_done
                 else android.R.drawable.stat_notify_error,
@@ -83,7 +89,24 @@ object DownloadNotifications {
             .setContentText(text)
             .setContentIntent(contentIntent(context))
             .setAutoCancel(true)
-            .build()
+        if (ok && openUri != null) {
+            runCatching {
+                val i = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(android.net.Uri.parse(openUri), mime ?: "*/*")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val pi = PendingIntent.getActivity(
+                    context, openUri.hashCode(), Intent.createChooser(i, null),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                builder.addAction(
+                    android.R.drawable.ic_menu_view,
+                    context.getString(R.string.open),
+                    pi,
+                )
+            }
+        }
+        return builder.build()
     }
 
     fun statusText(status: DownloadStatus, stage: String?): String = when (status) {

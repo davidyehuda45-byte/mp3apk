@@ -69,6 +69,25 @@ class DownloadsViewModel(app: Application) : ViewModel() {
     /** Removes a waiting item from the queue entirely (PRD §22). */
     fun remove(id: Long) = viewModelScope.launch { yt.downloads.deleteEntry(id) }
 
+    fun moveUp(id: Long) = viewModelScope.launch {
+        yt.downloads.reorder(id, -1)
+        yt.queueRunner.kick()
+    }
+
+    fun moveDown(id: Long) = viewModelScope.launch {
+        yt.downloads.reorder(id, 1)
+        yt.queueRunner.kick()
+    }
+
+    fun moveToTop(id: Long) = viewModelScope.launch {
+        yt.downloads.moveToTop(id)
+        yt.queueRunner.kick()
+    }
+
+    fun retryAll() = viewModelScope.launch { yt.retryDownload.retryAll() }
+
+    fun clearTerminal() = viewModelScope.launch { yt.downloads.clearTerminal() }
+
     companion object {
         fun factory(app: Application): ViewModelProvider.Factory = viewModelFactory {
             initializer { DownloadsViewModel(app) }
@@ -131,6 +150,10 @@ fun DownloadsScreen(
                 }
                 if (waiting.isNotEmpty()) {
                     Text("Queue", style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                        OutlinedButton(onClick = vm::retryAll) { Text("Retry semua gagal") }
+                        OutlinedButton(onClick = vm::clearTerminal) { Text("Bersihkan selesai") }
+                    }
                     waiting.forEach { item ->
                         AnimatedVisibility(
                             visible = true,
@@ -143,6 +166,9 @@ fun DownloadsScreen(
                                 item = item,
                                 onCancel = { pendingCancel = item },
                                 onRemove = { vm.remove(item.id) },
+                                onUp = { vm.moveUp(item.id) },
+                                onDown = { vm.moveDown(item.id) },
+                                onTop = { vm.moveToTop(item.id) },
                             )
                         }
                     }
@@ -262,7 +288,14 @@ private fun CurrentCard(item: DownloadItem, reduced: Boolean, onCancel: () -> Un
 }
 
 @Composable
-private fun QueueRow(item: DownloadItem, onCancel: () -> Unit, onRemove: () -> Unit) {
+private fun QueueRow(
+    item: DownloadItem,
+    onCancel: () -> Unit,
+    onRemove: () -> Unit,
+    onUp: () -> Unit,
+    onDown: () -> Unit,
+    onTop: () -> Unit,
+) {
     // Compact rows for waiting items (§38).
     Row(
         modifier = Modifier
@@ -280,6 +313,9 @@ private fun QueueRow(item: DownloadItem, onCancel: () -> Unit, onRemove: () -> U
             )
         }
         if (item.status == DownloadStatus.QUEUED) {
+            TextButton(onClick = onTop) { Text("Top") }
+            TextButton(onClick = onUp) { Text("▲") }
+            TextButton(onClick = onDown) { Text("▼") }
             // Waiting items can be removed outright; active ones go
             // through the cancel confirmation dialog (§32).
             TextButton(onClick = onRemove) { Text("Remove") }

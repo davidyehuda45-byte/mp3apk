@@ -78,7 +78,16 @@ class DownloadForegroundService : LifecycleService() {
                         startForegroundWith(lastTitle.ifBlank { "YT2MP3" }, ev.percent, ev.itemId)
                     }
                     ev.status == DownloadStatus.COMPLETED -> {
-                        notifyFinished(lastTitle, true)
+                        val done = item
+                        notifyFinished(
+                            lastTitle,
+                            true,
+                            done?.outputUri,
+                            done?.let {
+                                if (it.mediaKind == com.example.yt2mp3.domain.model.MediaKind.VIDEO) it.videoFormat.mime
+                                else it.format.mime
+                            },
+                        )
                         if (!app.downloads.hasActive() && app.queueRunner.nextPending() == null) stopSelf()
                     }
                     ev.status == DownloadStatus.FAILED || ev.status == DownloadStatus.CANCELLED -> {
@@ -111,11 +120,11 @@ class DownloadForegroundService : LifecycleService() {
         }
     }
 
-    private fun notifyFinished(title: String, ok: Boolean) {
+    private fun notifyFinished(title: String, ok: Boolean, openUri: String? = null, mime: String? = null) {
         val mgr = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
         mgr.notify(
             (System.currentTimeMillis() % Int.MAX_VALUE).toInt(),
-            DownloadNotifications.finished(this, title.ifBlank { "YT2MP3" }, ok),
+            DownloadNotifications.finished(this, title.ifBlank { "YT2MP3" }, ok, openUri, mime),
         )
     }
 

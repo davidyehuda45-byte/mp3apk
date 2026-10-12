@@ -2,13 +2,18 @@ package com.example.yt2mp3.data.engine
 
 import android.content.Context
 import com.example.yt2mp3.data.util.AppLog
+import com.example.yt2mp3.data.util.ArgSplitter
 import com.example.yt2mp3.data.util.UrlValidator
 import com.example.yt2mp3.domain.model.AudioFormat
 import com.example.yt2mp3.domain.model.AudioQuality
 import com.example.yt2mp3.domain.model.DownloadErrorKind
 import com.example.yt2mp3.domain.model.PlaylistInfo
+import com.example.yt2mp3.domain.model.PostOptions
+import com.example.yt2mp3.domain.model.SubtitleMode
 import com.example.yt2mp3.domain.model.VideoEntry
+import com.example.yt2mp3.domain.model.VideoFormat
 import com.example.yt2mp3.domain.model.VideoMetadata
+import com.example.yt2mp3.domain.model.VideoQuality
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -23,7 +28,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-/** How one queued item should be produced. Section bounds are in seconds. */
+/** How one queued audio item should be produced. Section bounds are in seconds. */
 data class DownloadOptions(
     val format: AudioFormat,
     val quality: AudioQuality,
@@ -31,6 +36,38 @@ data class DownloadOptions(
     val artist: String?,
     val sectionStart: Int? = null,
     val sectionEnd: Int? = null,
+    val post: PostOptions = PostOptions(),
+)
+
+/** How one queued video item should be produced. */
+data class VideoDownloadOptions(
+    val format: VideoFormat,
+    val quality: VideoQuality,
+    val title: String,
+    val artist: String?,
+    val sectionStart: Int? = null,
+    val sectionEnd: Int? = null,
+    val post: PostOptions = PostOptions(),
+)
+
+/** Result of a video download: merged file + sidecar files (e.g. separate subtitles). */
+data class EngineOutput(val main: File, val extras: List<File> = emptyList())
+
+/**
+ * Runtime tuning snapshot (retries, rate limit, proxy, UA, custom args).
+ * Updated by AppContainer from Settings; engine never stores credentials.
+ */
+data class EngineTuning(
+    val retries: Int = 3,
+    val fragmentRetries: Int = 3,
+    /** KiB/s, 0 = unlimited. yt-dlp --limit-rate takes bytes, we pass "N K". */
+    val rateLimitKbps: Int = 0,
+    val proxyUrl: String = "",
+    val userAgent: String = "",
+    val customArgs: List<String> = emptyList(),
+    val customFfmpegArgs: String = "",
+    val customFormat: String = "",
+    val debug: Boolean = false,
 )
 
 /**
@@ -54,6 +91,15 @@ interface YtDlpEngine {
         onProgress: (percent: Int?, stage: String) -> Unit,
         isCancelled: () -> Boolean,
     ): File
+
+    suspend fun downloadVideo(
+        url: String,
+        processId: String,
+        workDir: File,
+        options: VideoDownloadOptions,
+        onProgress: (percent: Int?, stage: String) -> Unit,
+        isCancelled: () -> Boolean,
+    ): EngineOutput
 }
 
 /**
@@ -67,6 +113,9 @@ object EngineLock {
 class YtDlpEngineImpl(context: Context) : YtDlpEngine {
     private val appContext = context.applicationContext
     @Volatile private var initialized = false
+
+    /** Updated from Settings by AppContainer; safe defaults when unset. */
+    @Volatile var tuning: EngineTuning = EngineTuning()
 
     /** yt-dlp's own cache (signature functions etc.). The library passes --no-cache-dir otherwise. */
     private val ytCacheDir = File(appContext.cacheDir, "ytdlp-cache")
@@ -101,10 +150,44 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
      * is not available" on both the bundled and the latest yt-dlp.
      */
     private fun request(urls: List<String>) = YoutubeDLRequest(urls).apply {
+        val t = tuning
         addOption("--cache-dir", ytCacheDir.absolutePath)
         addOption("--socket-timeout", "20")
-        addOption("--retries", "3")
-        addOption("--extractor-retries", "3")
+        addOption("--retries", t.retries.coerceIn(0, 10).toString())
+        addOption("--extractor-retries", t.retries.coerceIn(0, 10).toString())
+        addOption("--fragment-retries", t.fragmentRetries.coerceIn(0, 10).toString())
+        if (t.rateLimitKbps > 0) addOption("--limit-rate", "${t.rateLimitKbps}K")
+        if (t.proxyUrl.isNotBlank() && isSafeProxy(t.proxyUrl)) addOption("--proxy", t.proxyUrl.trim())
+        if (t.userAgent.isNotBlank()) addOption("--user-agent", t.userAgent.trim())
+        if (t.debug) addOption("--verbose")
+        applyCustomArgs(this, t.customArgs)
+    }
+
+    private fun applyCustomArgs(req: YoutubeDLRequest, args: List<String>) {
+        val clean = ArgSplitter.sanitized(args).filterNot { "://" in it }
+        var i = 0
+        while (i < clean.size) {
+            val a = clean[i]
+            if (a.startsWith("--") && i + 1 < clean.size && !clean[i + 1].startsWith("-") && "=" !in a) {
+                req.addOption(a, clean[i + 1])
+                i += 2
+            } else if (a.startsWith("-") && "=" !in a) {
+                req.addOption(a)
+                i += 1
+            } else {
+                // Positional or --opt=val tokens are ignored (no URL/option smuggling).
+                if (a.startsWith("--") && "=" in a) req.addOption(a)
+                i += 1
+            }
+        }
+    }
+
+    /** Only http(s)/socks proxies; never credentials in URL. */
+    private fun isSafeProxy(proxy: String): Boolean {
+        val p = proxy.trim()
+        if ("@" in p) return false
+        return p.startsWith("http://") || p.startsWith("https://") ||
+            p.startsWith("socks4://") || p.startsWith("socks5://")
     }
 
     /** Blocking yt-dlp run; coroutine cancellation interrupts it, which kills the process. */
@@ -134,28 +217,31 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
     /** Runs full extraction once and caches the JSON for the download step. */
     private suspend fun dumpInfo(cleanUrl: String): String {
         val req = request(listOf(cleanUrl)).apply {
+            // Single item only: playlist/channel/album URLs are expanded via fetchPlaylist().
             addOption("--no-playlist")
             addOption("-f", "bestaudio/best")
             addOption("--dump-json")
+            // No cookies/credentials: private/login-only content must fail as
+            // CONTENT_UNAVAILABLE, never prompt for bypass (PRD §1.2).
+            addOption("--no-cookies")
         }
         val line = YtJson.firstJsonLine(runCancellable(req).out)
             ?: throw IllegalStateException("Failed to fetch video information")
-        UrlValidator.videoId(cleanUrl)?.let { id ->
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    infoDir.mkdirs()
-                    infoDir.listFiles()?.forEach {
-                        if (System.currentTimeMillis() - it.lastModified() > INFO_MAX_AGE_MS) it.delete()
-                    }
-                    File(infoDir, "$id.json").writeText(line)
-                }.onFailure { AppLog.w("ENGINE", "info cache write failed", it) }
-            }
+        val key = UrlValidator.cacheKeyFor(cleanUrl)
+        withContext(Dispatchers.IO) {
+            runCatching {
+                infoDir.mkdirs()
+                infoDir.listFiles()?.forEach {
+                    if (System.currentTimeMillis() - it.lastModified() > INFO_MAX_AGE_MS) it.delete()
+                }
+                File(infoDir, "$key.json").writeText(line)
+            }.onFailure { AppLog.w("ENGINE", "info cache write failed", it) }
         }
         return line
     }
 
-    private fun cachedInfo(videoId: String): String? {
-        val f = File(infoDir, "$videoId.json")
+    private fun cachedInfo(key: String): String? {
+        val f = File(infoDir, "$key.json")
         if (!f.exists() || System.currentTimeMillis() - f.lastModified() > INFO_MAX_AGE_MS) return null
         return runCatching { f.readText() }.getOrNull()
     }
@@ -173,13 +259,20 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
     }
 
     override suspend fun fetchPlaylist(url: String): PlaylistInfo {
-        val req = request(listOf(url)).apply {
+        // Accept YouTube playlist pages and generic playlist/channel/album/user URLs.
+        val clean = UrlValidator.extractPlaylistUrl(url)
+            ?: UrlValidator.extractFirstSupportedUrl(url)
+            ?: throw IllegalArgumentException(DownloadErrorKind.INVALID_URL.name)
+        val req = request(listOf(clean)).apply {
             addOption("--flat-playlist")
             addOption("--yes-playlist")
             addOption("--dump-single-json")
+            addOption("--no-cookies")
             // One extra entry tells us whether the list was cut off.
             addOption("--playlist-items", "1:${PLAYLIST_LIMIT + 1}")
-            preferredLang()?.let { addOption("--extractor-args", "youtube:lang=$it") }
+            if (UrlValidator.isYoutubeUrl(clean)) {
+                preferredLang()?.let { addOption("--extractor-args", "youtube:lang=$it") }
+            }
         }
         val json = singleJson(runCancellable(req))
         return withContext(Dispatchers.Default) {
@@ -222,8 +315,8 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
     ): File {
         ensureInitIo()
         val clean = UrlValidator.extractFirstSupportedUrl(url) ?: url.trim()
-        val videoId = UrlValidator.videoId(clean)
-        var info = videoId?.let { withContext(Dispatchers.IO) { cachedInfo(it) } }
+        val key = UrlValidator.cacheKeyFor(clean)
+        var info = withContext(Dispatchers.IO) { cachedInfo(key) }
         val fromCache = info != null
         if (info == null) {
             onProgress(null, "Fetching info…")
@@ -239,7 +332,7 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
             // Stream URLs in cached info expire; refresh once instead of failing.
             if (fromCache && looksExpired(t)) {
                 AppLog.w("ENGINE", "cached info rejected, refreshing", t)
-                videoId?.let { File(infoDir, "$it.json").delete() }
+                File(infoDir, "$key.json").delete()
                 onProgress(null, "Fetching info…")
                 val fresh = dumpInfo(clean)
                 runDownload(fresh, processId, workDir, options, onProgress, isCancelled)
@@ -264,25 +357,159 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
             writeText(YtJson.withEditedTags(infoJson, options.title, options.artist))
         }
         val format = options.format
+        val post = options.post
+        val trimmed = options.sectionStart != null || options.sectionEnd != null
         val req = request(emptyList()).apply {
             addOption("--load-info-json", infoFile.absolutePath)
-            addOption("-f", sourceFormat(format, trimmed = sectionArg(options) != null))
-            addOption("--fragment-retries", "3")
+            addOption("-f", audioSourceFormat(format, trimmed))
+            addOption("--no-cookies")
             addOption("-x")
-            addOption("--audio-format", format.ext)
-            if (format == AudioFormat.MP3) {
+            addOption("--audio-format", format.ytdlpFormat)
+            if (format.usesQuality) {
                 addOption("--audio-quality", "${options.quality.bitrateKbps}K")
-            } else {
-                // MP3 gets ID3 tags + cover from Id3Writer; M4A is tagged by yt-dlp/ffmpeg.
-                addOption("--embed-metadata")
-                addOption("--embed-thumbnail")
-                addOption("--convert-thumbnails", "jpg")
             }
-            sectionArg(options)?.let { addOption("--download-sections", it) }
+            if (!post.stripMetadata) {
+                if (format != AudioFormat.MP3) {
+                    // MP3 gets ID3 tags + cover from Id3Writer; other formats are
+                    // tagged by yt-dlp/ffmpeg.
+                    addOption("--embed-metadata")
+                    addOption("--embed-thumbnail")
+                    addOption("--convert-thumbnails", "jpg")
+                }
+                if (post.embedChapters) addOption("--embed-chapters")
+            }
+            if (post.normalizeAudio) {
+                addOption("--postprocessor-args", "ffmpeg:-af loudnorm=I=-16:TP=-1.5:LRA=11")
+            }
+            tuning.customFfmpegArgs.trim().takeIf { it.isNotEmpty() }?.let {
+                addOption("--postprocessor-args", "ffmpeg:$it")
+            }
+            sectionArg(options.sectionStart, options.sectionEnd)?.let { addOption("--download-sections", it) }
             addOption("--no-mtime")
             addOption("-o", File(workDir, "audio.%(ext)s").absolutePath)
         }
-        val result = try {
+        val result = executeReq(req, processId, onProgress, isCancelled)
+        val output = workDir.listFiles()?.firstOrNull {
+            it.extension.equals(format.ext, true) && it.length() > 0 && it.nameWithoutExtension == "audio"
+        }
+        if (result != null) {
+            // Cover-art embedding is cosmetic: keep the audio if only that step failed.
+            val errorLines = result.message.orEmpty().lines().filter { it.trim().startsWith("ERROR") }
+            val coverOnly = errorLines.isNotEmpty() && errorLines.all { it.contains("thumbnail", ignoreCase = true) }
+            if (!(coverOnly && output != null)) throw result
+            AppLog.w("ENGINE", "cover embed failed, keeping audio", result)
+        }
+        output ?: throw IllegalStateException(DownloadErrorKind.CONVERSION_ERROR.name)
+    }
+
+    override suspend fun downloadVideo(
+        url: String,
+        processId: String,
+        workDir: File,
+        options: VideoDownloadOptions,
+        onProgress: (Int?, String) -> Unit,
+        isCancelled: () -> Boolean,
+    ): EngineOutput {
+        ensureInitIo()
+        val clean = UrlValidator.extractFirstSupportedUrl(url) ?: url.trim()
+        val key = UrlValidator.cacheKeyFor(clean)
+        var info = withContext(Dispatchers.IO) { cachedInfo(key) }
+        val fromCache = info != null
+        if (info == null) {
+            onProgress(null, "Fetching info…")
+            info = dumpInfo(clean)
+        }
+        if (isCancelled()) throw CancellationException()
+        return try {
+            runVideoDownload(info, processId, workDir, options, onProgress, isCancelled)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            if (isCancelled()) throw CancellationException()
+            if (fromCache && looksExpired(t)) {
+                AppLog.w("ENGINE", "cached info rejected, refreshing", t)
+                File(infoDir, "$key.json").delete()
+                onProgress(null, "Fetching info…")
+                runVideoDownload(dumpInfo(clean), processId, workDir, options, onProgress, isCancelled)
+            } else {
+                AppLog.e("ENGINE", "video download failed url=$clean", t)
+                throw t
+            }
+        }
+    }
+
+    private suspend fun runVideoDownload(
+        infoJson: String,
+        processId: String,
+        workDir: File,
+        options: VideoDownloadOptions,
+        onProgress: (Int?, String) -> Unit,
+        isCancelled: () -> Boolean,
+    ): EngineOutput = withContext(Dispatchers.IO) {
+        workDir.mkdirs()
+        workDir.listFiles()?.forEach { it.delete() }
+        val infoFile = File(workDir, "info.json").apply {
+            writeText(YtJson.withEditedTags(infoJson, options.title, options.artist))
+        }
+        val post = options.post
+        val req = request(emptyList()).apply {
+            addOption("--load-info-json", infoFile.absolutePath)
+            addOption("-f", videoSourceFormat(options.quality))
+            addOption("--no-cookies")
+            addOption("--merge-output-format", options.format.ext)
+            if (!post.stripMetadata) {
+                addOption("--embed-metadata")
+                addOption("--embed-thumbnail")
+                addOption("--convert-thumbnails", "jpg")
+                if (post.embedChapters) addOption("--embed-chapters")
+            }
+            if (post.sponsorBlock) addOption("--sponsorblock-remove", "sponsor")
+            when (post.subtitleMode) {
+                SubtitleMode.EMBED -> {
+                    addOption("--write-subs")
+                    addOption("--embed-subs")
+                    addOption("--sub-langs", cleanLangs(post.subLangs))
+                    addOption("--sub-format", "vtt/best")
+                }
+                SubtitleMode.SEPARATE -> {
+                    addOption("--write-subs")
+                    addOption("--no-embed-subs")
+                    addOption("--sub-langs", cleanLangs(post.subLangs))
+                    addOption("--sub-format", "srt/vtt/best")
+                }
+                SubtitleMode.NONE -> Unit
+            }
+            if (post.normalizeAudio) {
+                addOption("--postprocessor-args", "ffmpeg:-af loudnorm=I=-16:TP=-1.5:LRA=11")
+            }
+            tuning.customFfmpegArgs.trim().takeIf { it.isNotEmpty() }?.let {
+                addOption("--postprocessor-args", "ffmpeg:$it")
+            }
+            sectionArg(options.sectionStart, options.sectionEnd)?.let { addOption("--download-sections", it) }
+            addOption("--no-mtime")
+            addOption("-o", File(workDir, "video.%(ext)s").absolutePath)
+        }
+        val result = executeReq(req, processId, onProgress, isCancelled)
+        val main = workDir.listFiles()?.firstOrNull {
+            it.extension.equals(options.format.ext, true) && it.length() > 0 && it.nameWithoutExtension == "video"
+        }
+        if (result != null && main == null) throw result
+        if (result != null) AppLog.w("ENGINE", "video post step warning", result)
+        val output = main ?: throw IllegalStateException(DownloadErrorKind.CONVERSION_ERROR.name)
+        val extras = workDir.listFiles()?.filter {
+            it.length() > 0 && it.nameWithoutExtension.startsWith("video.") && it != output &&
+                it.extension.lowercase() in setOf("srt", "vtt")
+        } ?: emptyList()
+        EngineOutput(output, extras)
+    }
+
+    private suspend fun executeReq(
+        req: YoutubeDLRequest,
+        processId: String,
+        onProgress: (Int?, String) -> Unit,
+        isCancelled: () -> Boolean,
+    ): Throwable? {
+        return try {
             EngineLock.rw.read {
                 YoutubeDL.getInstance().execute(req, processId) { progress, _, _ ->
                     if (isCancelled()) {
@@ -300,32 +527,36 @@ class YtDlpEngineImpl(context: Context) : YtDlpEngine {
             if (isCancelled()) throw CancellationException()
             t
         }
-        val output = workDir.listFiles()?.firstOrNull {
-            it.extension.equals(format.ext, true) && it.length() > 0 && it.nameWithoutExtension == "audio"
-        }
-        if (result != null) {
-            // Cover-art embedding is cosmetic: keep the audio if only that step failed.
-            val errorLines = result.message.orEmpty().lines().filter { it.trim().startsWith("ERROR") }
-            val coverOnly = errorLines.isNotEmpty() && errorLines.all { it.contains("thumbnail", ignoreCase = true) }
-            if (!(coverOnly && output != null)) throw result
-            AppLog.w("ENGINE", "cover embed failed, keeping audio", result)
-        }
-        output ?: throw IllegalStateException(DownloadErrorKind.CONVERSION_ERROR.name)
     }
 
     /**
      * Trims always cut from the M4A stream: ffmpeg's stream-copy seek in WebM/Opus
-     * snaps to ~10 s clusters (verified: "30-inf" started at ~20 s), while AAC in
-     * MP4 cuts within ~0.04 s. MP3 is re-encoded anyway, so quality is unaffected.
+     * snaps to ~10 s clusters, while AAC in MP4 cuts within ~0.04 s.
      */
-    private fun sourceFormat(format: AudioFormat, trimmed: Boolean): String =
-        if (format == AudioFormat.M4A || trimmed) "bestaudio[ext=m4a]/bestaudio/best" else "bestaudio/best"
+    private fun audioSourceFormat(format: AudioFormat, trimmed: Boolean): String {
+        val custom = tuning.customFormat.trim()
+        if (custom.isNotEmpty()) return custom
+        return if (format == AudioFormat.M4A || trimmed) "bestaudio[ext=m4a]/bestaudio/best" else "bestaudio/best"
+    }
 
-    private fun sectionArg(o: DownloadOptions): String? {
-        if (o.sectionStart == null && o.sectionEnd == null) return null
-        val start = (o.sectionStart ?: 0).coerceAtLeast(0)
-        val end = o.sectionEnd?.toString() ?: "inf"
-        return "*$start-$end"
+    private fun videoSourceFormat(quality: VideoQuality): String {
+        val custom = tuning.customFormat.trim()
+        if (custom.isNotEmpty()) return custom
+        val h = quality.maxHeight
+        return if (h == null) "bestvideo+bestaudio/best"
+        else "bestvideo[height<=$h]+bestaudio/best[height<=$h]/best[height<=$h]/best"
+    }
+
+    private fun cleanLangs(langs: String): String {
+        val parts = langs.split(',').map { it.trim().lowercase() }.filter { it.matches(Regex("[a-z-]{2,12}")) }
+        return parts.take(4).joinToString(",").ifEmpty { "en" }
+    }
+
+    private fun sectionArg(start: Int?, end: Int?): String? {
+        if (start == null && end == null) return null
+        val s = (start ?: 0).coerceAtLeast(0)
+        val e = end?.toString() ?: "inf"
+        return "*$s-$e"
     }
 
     private fun looksExpired(t: Throwable): Boolean {

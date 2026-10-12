@@ -7,4 +7,7 @@
     <string name="notif_complete">Download complete: %1$s</string>
     <string name="notif_failed">Download failed: %1$s</string>
     <string name="cancel">Cancel</string>
+    <string name="open">Open</string>
+    <string name="shortcut_paste">Tempel &amp; unduh</string>
+    <string name="shortcut_open">Buka YT2MP3</string>
 </resources>

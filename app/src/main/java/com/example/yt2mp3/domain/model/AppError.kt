@@ -20,9 +20,9 @@ data class AppError(val kind: DownloadErrorKind, val message: String, val cause:
 fun AppError.userMessage(): String = when (kind) {
     DownloadErrorKind.INVALID_URL -> "URL tidak valid. Periksa kembali link yang dimasukkan."
     DownloadErrorKind.UNSUPPORTED_URL ->
-        "Link ini tidak didukung. Pakai link satu video YouTube (youtube.com / youtu.be), bukan playlist atau channel."
+        "Link ini tidak didukung. Pakai link langsung ke video/audio (YouTube, TikTok, Instagram, Facebook, X, Reddit, Vimeo, SoundCloud, dsb), bukan halaman channel/profil."
     DownloadErrorKind.CONTENT_UNAVAILABLE ->
-        "Konten tidak dapat diakses oleh engine download. Konten privat/dibatasi atau telah dihapus."
+        "Konten tidak dapat diakses oleh engine download. Konten privat/dibatasi/berbayar/DRM atau telah dihapus. App tidak membuka konten privat dan tidak mem-bypass DRM."
     DownloadErrorKind.NETWORK_ERROR -> "Tidak ada koneksi internet. Periksa koneksi dan coba lagi."
     DownloadErrorKind.STORAGE_ERROR -> "Folder penyimpanan tidak tersedia. Pilih folder lain."
     DownloadErrorKind.PERMISSION_REVOKED ->
@@ -30,7 +30,7 @@ fun AppError.userMessage(): String = when (kind) {
     DownloadErrorKind.STORAGE_FULL -> "Ruang penyimpanan tidak cukup."
     DownloadErrorKind.CONVERSION_ERROR -> "Konversi audio gagal. Coba lagi."
     DownloadErrorKind.EXTRACTOR_ERROR ->
-        "YouTube menolak permintaan atau engine perlu diperbarui. Buka Settings → Update engine, lalu Try again."
+        "Situs menolak permintaan atau engine perlu diperbarui. Buka Settings → Update engine, lalu Try again."
     DownloadErrorKind.CANCELLED -> "Download dibatalkan."
     DownloadErrorKind.UNKNOWN -> "Terjadi kesalahan. Coba lagi."
 }

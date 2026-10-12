@@ -6,12 +6,16 @@ data class VideoMetadata(
     val artist: String?,
     val durationSecs: Long?,
     val thumbnailUrl: String?,
-    /** Bytes of the stream MP3 conversion downloads (best audio), if YouTube reports it. */
+    /** Bytes of the stream MP3 conversion downloads (best audio), if reported. */
     val bestAudioBytes: Long? = null,
     /** Bytes of the best original M4A/AAC stream, if one exists. */
     val m4aBytes: Long? = null,
     /** Set when the link was a video inside a playlist (watch?v=…&list=…). */
     val playlistUrl: String? = null,
+    /** yt-dlp extractor id, e.g. "youtube", "tiktok", "soundcloud". Null when unknown. */
+    val extractor: String? = null,
+    /** Human-readable site name for the UI, e.g. "YouTube", "TikTok". */
+    val siteName: String? = null,
 )
 
 /** A lightweight entry from search results or a playlist listing (no full extraction). */
@@ -21,6 +25,7 @@ data class VideoEntry(
     val channel: String?,
     val durationSecs: Long?,
     val thumbnailUrl: String?,
+    val extractor: String? = null,
 )
 
 data class PlaylistInfo(
@@ -40,6 +45,14 @@ data class DownloadRequest(
     val format: AudioFormat,
     val sectionStart: Int? = null,
     val sectionEnd: Int? = null,
+    val mediaKind: MediaKind = MediaKind.AUDIO,
+    val videoFormat: VideoFormat = VideoFormat.DEFAULT,
+    val videoQuality: VideoQuality = VideoQuality.DEFAULT,
+    val post: PostOptions = PostOptions(),
+    /** Subfolder inside the SAF destination (playlist/channel name). Null = root. */
+    val subfolder: String? = null,
+    /** Resolved file base name without extension (pattern applied). Null = derive from title. */
+    val outputBaseName: String? = null,
 )
 
 data class DownloadItem(
@@ -61,6 +74,12 @@ data class DownloadItem(
     val errorMessage: String?,
     val createdAt: Long,
     val completedAt: Long?,
+    val mediaKind: MediaKind = MediaKind.AUDIO,
+    val videoFormat: VideoFormat = VideoFormat.DEFAULT,
+    val videoQuality: VideoQuality = VideoQuality.DEFAULT,
+    val post: PostOptions = PostOptions(),
+    val subfolder: String? = null,
+    val favorite: Boolean = false,
 )
 
 data class DownloadProgress(

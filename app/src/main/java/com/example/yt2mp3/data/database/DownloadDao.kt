@@ -10,6 +10,11 @@ import com.example.yt2mp3.domain.model.AudioFormat
 import com.example.yt2mp3.domain.model.AudioQuality
 import com.example.yt2mp3.domain.model.DownloadItem
 import com.example.yt2mp3.domain.model.DownloadStatus
+import com.example.yt2mp3.domain.model.MediaKind
+import com.example.yt2mp3.domain.model.PostOptions
+import com.example.yt2mp3.domain.model.SubtitleMode
+import com.example.yt2mp3.domain.model.VideoFormat
+import com.example.yt2mp3.domain.model.VideoQuality
 import kotlinx.coroutines.flow.Flow
 
 /** PRD §28 entity. */
@@ -33,6 +38,18 @@ data class DownloadEntity(
     val errorMessage: String?,
     val createdAt: Long,
     val completedAt: Long?,
+    val mediaKind: String = MediaKind.AUDIO.name,
+    val videoFormat: String? = null,
+    val videoQuality: String? = null,
+    val subtitleMode: String = SubtitleMode.NONE.name,
+    val subLangs: String = "en,id",
+    val embedChapters: Boolean = false,
+    val sponsorBlock: Boolean = false,
+    val normalizeAudio: Boolean = false,
+    val saveThumb: Boolean = false,
+    val stripMetadata: Boolean = false,
+    val subfolder: String? = null,
+    val favorite: Boolean = false,
 )
 
 fun DownloadEntity.toDomain() = DownloadItem(
@@ -53,6 +70,20 @@ fun DownloadEntity.toDomain() = DownloadItem(
     errorMessage = errorMessage,
     createdAt = createdAt,
     completedAt = completedAt,
+    mediaKind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.AUDIO),
+    videoFormat = VideoFormat.fromName(videoFormat),
+    videoQuality = VideoQuality.fromName(videoQuality),
+    post = PostOptions(
+        subtitleMode = SubtitleMode.fromName(subtitleMode),
+        subLangs = subLangs.ifBlank { "en,id" },
+        embedChapters = embedChapters,
+        sponsorBlock = sponsorBlock,
+        normalizeAudio = normalizeAudio,
+        saveThumbSeparate = saveThumb,
+        stripMetadata = stripMetadata,
+    ),
+    subfolder = subfolder,
+    favorite = favorite,
 )
 
 @Dao
@@ -62,6 +93,9 @@ interface DownloadDao {
 
     @Query("SELECT * FROM downloads WHERE status IN ('QUEUED','DOWNLOADING','CONVERTING','SAVING') ORDER BY createdAt ASC, id ASC")
     fun observeActiveQueue(): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE status IN ('QUEUED','DOWNLOADING','CONVERTING','SAVING') ORDER BY createdAt ASC, id ASC")
+    suspend fun queueSnapshot(): List<DownloadEntity>
 
     @Query("SELECT * FROM downloads WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): DownloadEntity?
@@ -92,4 +126,22 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun delete(id: Long)
+
+    @Query("SELECT sourceUrl FROM downloads WHERE sourceUrl IN (:urls)")
+    suspend fun existingUrls(urls: List<String>): List<String>
+
+    @Query("UPDATE downloads SET createdAt = :ts WHERE id = :id")
+    suspend fun updateCreatedAt(id: Long, ts: Long)
+
+    @Query("UPDATE downloads SET favorite = :fav WHERE id = :id")
+    suspend fun setFavorite(id: Long, fav: Boolean)
+
+    @Query("UPDATE downloads SET outputFileName = :name, outputUri = :uri WHERE id = :id")
+    suspend fun updateOutput(id: Long, name: String, uri: String)
+
+    @Query("UPDATE downloads SET status = 'QUEUED', progress = NULL, stage = 'Waiting', errorMessage = NULL WHERE status IN ('FAILED','CANCELLED')")
+    suspend fun retryAllFailed(): Int
+
+    @Query("DELETE FROM downloads WHERE status IN ('COMPLETED','FAILED','CANCELLED')")
+    suspend fun clearTerminal(): Int
 }

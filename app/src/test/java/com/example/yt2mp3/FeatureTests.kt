@@ -61,9 +61,81 @@ class FeatureTests {
     }
 
     @Test fun otherLinksAreUnsupported() {
-        assertEquals(ParsedInput.Unsupported, InputParser.parse("https://example.com/video"))
-        assertEquals(ParsedInput.Unsupported, InputParser.parse("https://www.youtube.com/@somechannel"))
-        assertEquals(ParsedInput.Unsupported, InputParser.parse("www.tiktok.com/@x/video/1"))
+        // Fase 1 generic: public links from any site are Video; channel pages
+        // open the playlist flow; bare homepages stay Unsupported.
+        assertTrue(InputParser.parse("https://example.com/video") is ParsedInput.Video)
+        assertTrue(InputParser.parse("www.tiktok.com/@x/video/1234567890") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://www.youtube.com/@somechannel") is ParsedInput.Playlist)
+        assertEquals(ParsedInput.Unsupported, InputParser.parse("https://www.youtube.com/"))
+    }
+
+    @Test fun batchPasteSplitsLinks() {
+        val p = InputParser.parse(
+            "https://youtu.be/k08A4cjVI8k?si=x https://www.tiktok.com/@x/video/1",
+        )
+        assertTrue(p is ParsedInput.Batch)
+        assertEquals(2, (p as ParsedInput.Batch).urls.size)
+    }
+
+    @Test fun genericSingleIsVideo() {
+        val p = InputParser.parse("https://soundcloud.com/artist/track-name")
+        assertTrue(p is ParsedInput.Video)
+    }
+
+    @Test fun channelOpensPlaylist() {
+        assertTrue(InputParser.parse("https://www.youtube.com/@somechannel") is ParsedInput.Playlist)
+        assertTrue(
+            InputParser.parse("https://www.youtube.com/channel/UC1234567890abcdef") is ParsedInput.Playlist,
+        )
+    }
+
+    // ---------------------------------------------------------- pure utils
+
+    @Test fun playlistRangeParses() {
+        assertEquals(setOf(0, 1, 2), com.example.yt2mp3.data.util.PlaylistRange.parse("1-3", 10))
+        assertEquals(setOf(0, 9, 14), com.example.yt2mp3.data.util.PlaylistRange.parse("1, 10,15", 15))
+        assertEquals(setOf(0, 1, 2, 4), com.example.yt2mp3.data.util.PlaylistRange.parse("1-3,5", 10))
+        assertNull(com.example.yt2mp3.data.util.PlaylistRange.parse("3-1", 10))
+        assertNull(com.example.yt2mp3.data.util.PlaylistRange.parse("0", 10))
+        assertNull(com.example.yt2mp3.data.util.PlaylistRange.parse("11", 10))
+        assertNull(com.example.yt2mp3.data.util.PlaylistRange.parse("abc", 10))
+        assertEquals((0 until 5).toSet(), com.example.yt2mp3.data.util.PlaylistRange.parse("", 5))
+    }
+
+    @Test fun fileNamePatternApplies() {
+        val got = com.example.yt2mp3.data.util.FileNamePattern.apply(
+            "{title} - {artist} [{id}]", "Lagu", "Artis", "abc123", "YouTube", "2026-10-12",
+        )
+        assertEquals("Lagu - Artis [abc123]", got)
+        val missing = com.example.yt2mp3.data.util.FileNamePattern.apply(
+            "{title} - {artist}", "Lagu", null, null, null, "2026-10-12",
+        )
+        assertEquals("Lagu", missing)
+    }
+
+    @Test fun argSplitterStripsLogin() {
+        val args = com.example.yt2mp3.data.util.ArgSplitter.sanitized(
+            com.example.yt2mp3.data.util.ArgSplitter.split("--sponsorblock-remove sponsor --cookies c.txt --username u -p p --verbose"),
+        )
+        assertEquals(listOf("--sponsorblock-remove", "sponsor", "--verbose"), args)
+    }
+
+    @Test fun rssParses() {
+        val xml = """<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015">""" +
+            """<entry><yt:videoId>abc123</yt:videoId><title>Judul</title></entry></feed>"""
+        val items = com.example.yt2mp3.data.util.RssFeed.parse(xml)
+        assertEquals(1, items.size)
+        assertEquals("abc123", items[0].videoId)
+        assertEquals("UCxxxxxxxxxxxxxxxxxxxxxx", com.example.yt2mp3.data.util.RssFeed.channelIdFrom("UCxxxxxxxxxxxxxxxxxxxxxx"))
+    }
+
+    @Test fun profilesRoundTrip() {
+        val p = com.example.yt2mp3.domain.model.DownloadProfile(name = "Musik")
+        val back = com.example.yt2mp3.data.util.Profiles.decode(
+            com.example.yt2mp3.data.util.Profiles.encode(listOf(p)),
+        )
+        assertEquals(1, back.size)
+        assertEquals("Musik", back[0].name)
     }
 
     // ------------------------------------------------------------- TimeFormat

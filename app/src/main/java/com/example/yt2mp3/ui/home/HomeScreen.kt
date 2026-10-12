@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -80,11 +81,16 @@ import com.example.yt2mp3.data.util.ParsedInput
 import com.example.yt2mp3.domain.model.AudioFormat
 import com.example.yt2mp3.domain.model.AudioQuality
 import com.example.yt2mp3.domain.model.DownloadItem
+import com.example.yt2mp3.domain.model.DownloadProfile
 import com.example.yt2mp3.domain.model.DownloadStatus
+import com.example.yt2mp3.domain.model.MediaKind
 import com.example.yt2mp3.domain.model.SizeEstimator
+import com.example.yt2mp3.domain.model.SubtitleMode
 import com.example.yt2mp3.domain.model.TimeFormat
 import com.example.yt2mp3.domain.model.VideoEntry
+import com.example.yt2mp3.domain.model.VideoFormat
 import com.example.yt2mp3.domain.model.VideoMetadata
+import com.example.yt2mp3.domain.model.VideoQuality
 import com.example.yt2mp3.ui.components.SmallThumb
 import com.example.yt2mp3.ui.components.listThumb
 import com.example.yt2mp3.ui.theme.AppMotion
@@ -111,6 +117,37 @@ fun HomeScreen(
     val reduced = rememberReducedMotion()
 
     var pastedTick by remember { mutableStateOf(false) }
+    var showSites by remember { mutableStateOf(false) }
+    var showDisclaimer by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        showDisclaimer = runCatching {
+            !(context.applicationContext as Yt2Mp3App).settings.getSeenDisclaimer()
+        }.getOrDefault(false)
+    }
+    // Clipboard monitor: saat kembali ke app dan input kosong, tawarkan link dari clipboard.
+    val lifecycleOwner = context as? androidx.lifecycle.LifecycleOwner
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                scope.launch {
+                    val app = context.applicationContext as Yt2Mp3App
+                    if (!app.settings.getAutoPaste()) return@launch
+                    if (vm.state.value.input.isNotBlank()) return@launch
+                    val text = clipboard.getText()?.text?.trim().orEmpty()
+                    if (text.isBlank()) return@launch
+                    val urls = com.example.yt2mp3.data.util.UrlValidator.extractAllSupportedUrls(text)
+                    if (urls.isNotEmpty() && vm.state.value.input != text.take(2000)) {
+                        vm.onInputChange(text.take(2000))
+                        pastedTick = true
+                        focus.clearFocus()
+                        vm.submit()
+                    }
+                }
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(obs)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(obs) }
+    }
     LaunchedEffect(pastedTick) {
         if (pastedTick) {
             delay(1000)
@@ -136,6 +173,20 @@ fun HomeScreen(
             )
             scope.launch {
                 (context.applicationContext as Yt2Mp3App).settings.setDestinationUri(uri.toString())
+            }
+        }
+    }
+
+    // Import batch links from TXT/CSV/JSON (Fase 1: batch paste via file).
+    val importPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val text = runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+                }.getOrNull()
+                if (!text.isNullOrBlank()) vm.importBatchText(text)
             }
         }
     }
@@ -172,7 +223,7 @@ fun HomeScreen(
             Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                 Text("Download audio", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Tempel link YouTube, link playlist, atau ketik judul lagu.",
+                    "Tempel link video/audio (YouTube, TikTok, IG, FB, X, SoundCloud, dsb), beberapa link sekaligus, link playlist, atau ketik judul lagu.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -182,7 +233,7 @@ fun HomeScreen(
                 value = state.input,
                 onValueChange = vm::onInputChange,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Link atau judul lagu") },
+                placeholder = { Text("Link, beberapa link, atau judul lagu") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
                     if (state.input.isNotEmpty()) {
@@ -191,7 +242,8 @@ fun HomeScreen(
                         }
                     }
                 },
-                singleLine = true,
+                singleLine = false,
+                maxLines = 5,
                 isError = state.content is HomeContent.Error,
                 shape = MaterialTheme.shapes.medium,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -213,29 +265,43 @@ fun HomeScreen(
                     Spacer(Modifier.padding(end = AppSpacing.xs))
                     Text(if (pastedTick) "Pasted" else "Paste")
                 }
+                OutlinedButton(onClick = { importPicker.launch(arrayOf("text/plain", "text/csv", "application/json")) }) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = null)
+                    Spacer(Modifier.padding(end = AppSpacing.xs))
+                    Text("Import file")
+                }
                 Button(onClick = submit) {
                     Text(
                         when (state.parsed) {
                             is ParsedInput.Search -> "Cari"
                             is ParsedInput.Playlist -> "Buka playlist"
+                            is ParsedInput.Batch -> "Preview ${(state.parsed as ParsedInput.Batch).urls.size} link"
                             else -> "Preview"
                         },
                     )
                 }
+            }
+            TextButton(onClick = { showSites = true }) {
+                Text("Situs didukung (1000+ via yt-dlp) — lihat daftar")
             }
 
             HorizontalDivider()
 
             ContentSection(state = state, vm = vm, reduced = reduced)
 
-            val downloadable = state.content is HomeContent.Video || state.content is HomeContent.Playlist
+            val downloadable = state.content is HomeContent.Video ||
+                state.content is HomeContent.Playlist || state.content is HomeContent.Batch
             if (downloadable) {
+                ProfilesRow(
+                    profiles = state.profiles,
+                    active = state.activeProfile,
+                    onApply = vm::applyProfile,
+                    onSave = vm::saveProfile,
+                    onDelete = vm::deleteProfile,
+                )
                 OptionsSection(
-                    format = state.format,
-                    quality = state.quality,
-                    estimate = state.estimate,
-                    onFormat = vm::onFormatChange,
-                    onQuality = vm::onQualityChange,
+                    state = state,
+                    vm = vm,
                 )
 
                 Text("Save location", style = MaterialTheme.typography.titleMedium)
@@ -272,12 +338,25 @@ fun HomeScreen(
                     )
                     is HomeContent.Playlist -> Button(
                         onClick = vm::download,
-                        enabled = state.canDownload && state.destinationLabel != null && c.selected.isNotEmpty(),
+                        enabled = state.canDownload && state.destinationLabel != null && c.selected.isNotEmpty() &&
+                            state.rangeError == null,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Filled.Download, contentDescription = null)
                         Spacer(Modifier.padding(end = AppSpacing.xs))
-                        Text("Download ${c.selected.size} lagu", style = MaterialTheme.typography.labelLarge)
+                        val n = state.rangedIndices(c.info.entries.size, c.selected).size
+                        Text("Download $n item", style = MaterialTheme.typography.labelLarge)
+                    }
+                    is HomeContent.Batch -> Button(
+                        onClick = vm::download,
+                        enabled = state.canDownload && state.destinationLabel != null && c.selected.isNotEmpty() &&
+                            state.rangeError == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null)
+                        Spacer(Modifier.padding(end = AppSpacing.xs))
+                        val n = state.rangedIndices(c.items.size, c.selected).size
+                        Text("Download $n link", style = MaterialTheme.typography.labelLarge)
                     }
                     else -> Unit
                 }
@@ -302,10 +381,65 @@ fun HomeScreen(
 
             if (state.content is HomeContent.Idle) {
                 Text(
-                    "Tip: di aplikasi YouTube, tekan Share → YT2MP3 untuk langsung membuka link di sini.",
+                    "Tip: di aplikasi lain, tekan Share → YT2MP3 untuk langsung membuka link di sini. " +
+                        "Bisa tempel banyak link sekaligus atau import file TXT/CSV/JSON. " +
+                        "Hanya untuk konten publik yang boleh disimpan; konten privat/berbayar/DRM tidak didukung.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+
+    if (showDisclaimer) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Penting: hak cipta & penggunaan") },
+            text = {
+                Text(
+                    "YT2MP3 hanya untuk konten publik yang kamu miliki atau diizinkan menyimpan " +
+                        "untuk dipakai offline pribadi.\n\nDilarang: konten privat/login-only, konten " +
+                        "berbayar, dan mem-bypass DRM atau proteksi akses. Patuhi syarat layanan tiap situs.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDisclaimer = false
+                    scope.launch {
+                        (context.applicationContext as Yt2Mp3App).settings.setSeenDisclaimer()
+                    }
+                }) { Text("Mengerti") }
+            },
+        )
+    }
+
+    if (showSites) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { showSites = false },
+            sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(
+                Modifier.padding(start = AppSpacing.screen, end = AppSpacing.screen, bottom = AppSpacing.section),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+            ) {
+                Text("Situs didukung", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Engine yt-dlp di HP mendukung 1000+ situs publik. Yang populer:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                com.example.yt2mp3.data.util.SupportedSites.popular.forEach { site ->
+                    Column(Modifier.padding(vertical = AppSpacing.xs)) {
+                        Text(site.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            site.hint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    HorizontalDivider()
+                }
             }
         }
     }
@@ -334,12 +468,18 @@ private fun ContentSection(state: HomeScreenState, vm: HomeViewModel, reduced: B
                 onBack = vm::backToResults,
                 onEdits = vm::onEdits,
                 onOpenPlaylist = { url -> vm.loadPlaylist(url) },
+                onOpenAsPlaylist = vm::openAsPlaylist,
             )
         }
         is HomeContent.Playlist -> PlaylistSection(
             c,
             onToggle = vm::toggleEntry,
             onSelectAll = vm::selectAll,
+        )
+        is HomeContent.Batch -> BatchSection(
+            c,
+            onToggle = vm::toggleBatch,
+            onSelectAll = vm::selectBatchAll,
         )
     }
 }
@@ -428,6 +568,7 @@ private fun VideoSection(
     onBack: () -> Unit,
     onEdits: ((VideoEdits) -> VideoEdits) -> Unit,
     onOpenPlaylist: (String) -> Unit,
+    onOpenAsPlaylist: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.group)) {
         if (showBack) {
@@ -508,6 +649,11 @@ private fun VideoSection(
                 Text("Link ini bagian dari playlist — buka playlist")
             }
         }
+        OutlinedButton(onClick = onOpenAsPlaylist) {
+            Icon(Icons.Filled.LibraryMusic, contentDescription = null)
+            Spacer(Modifier.padding(end = AppSpacing.xs))
+            Text("Buka sebagai playlist/channel/album")
+        }
     }
 }
 
@@ -535,6 +681,13 @@ private fun PreviewCard(meta: VideoMetadata) {
                     contentScale = ContentScale.Crop,
                 )
             }
+            meta.siteName?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Text(meta.title, style = MaterialTheme.typography.titleMedium)
             Text(
                 listOfNotNull(meta.artist, meta.durationSecs?.let(TimeFormat::format)).joinToString(" · "),
@@ -555,8 +708,8 @@ private fun PlaylistSection(
         Text(c.info.title, style = MaterialTheme.typography.titleMedium)
         Text(
             buildString {
-                append("${c.info.entries.size} video")
-                if (c.info.truncated) append(" (dibatasi 100 video pertama)")
+                append("${c.info.entries.size} item")
+                if (c.info.truncated) append(" (dibatasi 100 pertama)")
                 append(" · ${c.selected.size} dipilih")
             },
             style = MaterialTheme.typography.bodySmall,
@@ -576,46 +729,226 @@ private fun PlaylistSection(
     }
 }
 
-// ----------------------------------------------------------------- options
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OptionsSection(
-    format: AudioFormat,
-    quality: AudioQuality,
-    estimate: SizeEstimator.Estimate?,
-    onFormat: (AudioFormat) -> Unit,
-    onQuality: (AudioQuality) -> Unit,
+private fun BatchSection(
+    c: HomeContent.Batch,
+    onToggle: (Int) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
-        Text("Format", style = MaterialTheme.typography.titleMedium)
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            AudioFormat.entries.forEachIndexed { i, f ->
-                SegmentedButton(
-                    selected = format == f,
-                    onClick = { onFormat(f) },
-                    shape = SegmentedButtonDefaults.itemShape(i, AudioFormat.entries.size),
-                ) { Text(f.label) }
-            }
+    val ready = c.items.count { it.meta != null }
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+        Text("Batch: ${c.items.size} link", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "$ready siap · ${c.selected.size} dipilih (maks ${com.example.yt2mp3.data.util.UrlValidator.MAX_BATCH}/paste)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val allSelected = c.selected.size == ready && ready > 0
+        TextButton(onClick = { onSelectAll(!allSelected) }) {
+            Text(if (allSelected) "Hapus semua pilihan" else "Pilih semua yang siap")
         }
-        if (format == AudioFormat.MP3) {
-            Text("Quality", style = MaterialTheme.typography.titleMedium)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                AudioQuality.entries.forEachIndexed { i, q ->
-                    SegmentedButton(
-                        selected = quality == q,
-                        onClick = { onQuality(q) },
-                        shape = SegmentedButtonDefaults.itemShape(i, AudioQuality.entries.size),
-                    ) { Text(q.label) }
+        c.items.forEachIndexed { i, item ->
+            val meta = item.meta
+            if (meta != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggle(i) }
+                        .padding(vertical = AppSpacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.group),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = i in c.selected, onCheckedChange = { onToggle(i) })
+                    SmallThumb(url = listThumb(meta.thumbnailUrl), contentDescription = null)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                        Text(
+                            meta.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            listOfNotNull(
+                                meta.siteName,
+                                meta.artist,
+                                meta.durationSecs?.let(TimeFormat::format),
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = AppSpacing.sm),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.ErrorOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            item.url.take(80),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            item.error ?: "Gagal memuat.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+// ----------------------------------------------------------------- options
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun OptionsSection(
+    state: HomeScreenState,
+    vm: HomeViewModel,
+) {
+    val format = state.format
+    val quality = state.quality
+    val estimate = state.estimate
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+        Text("Jenis output", style = MaterialTheme.typography.titleMedium)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            MediaKind.entries.forEachIndexed { i, k ->
+                SegmentedButton(
+                    selected = state.mediaKind == k,
+                    onClick = { vm.onMediaKindChange(k) },
+                    shape = SegmentedButtonDefaults.itemShape(i, MediaKind.entries.size),
+                ) { Text(if (k == MediaKind.AUDIO) "Audio" else "Video") }
+            }
+        }
+        if (state.mediaKind == MediaKind.AUDIO) {
+            Text("Format", style = MaterialTheme.typography.titleMedium)
+            // 6 formats don't fit a segmented row: wrap as filter chips.
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+            ) {
+                AudioFormat.entries.forEach { f ->
+                    androidx.compose.material3.FilterChip(
+                        selected = format == f,
+                        onClick = { vm.onFormatChange(f) },
+                        label = { Text(f.label) },
+                    )
+                }
+            }
+            if (format.usesQuality) {
+                Text("Quality", style = MaterialTheme.typography.titleMedium)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    AudioQuality.entries.forEachIndexed { i, q ->
+                        SegmentedButton(
+                            selected = quality == q,
+                            onClick = { vm.onQualityChange(q) },
+                            shape = SegmentedButtonDefaults.itemShape(i, AudioQuality.entries.size),
+                        ) { Text(q.label) }
+                    }
+                }
+            } else if (format == AudioFormat.M4A) {
+                Text(
+                    "Audio asli tanpa konversi: lebih cepat, file lebih kecil, kualitas tidak turun. " +
+                        "Bisa diputar di hampir semua HP.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    "Format lossless (FLAC/WAV): kualitas maksimal, file lebih besar. Quality bitrate tidak berlaku.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         } else {
-            Text(
-                "Audio asli dari YouTube tanpa konversi: lebih cepat, file lebih kecil, kualitas tidak turun. " +
-                    "Bisa diputar di hampir semua HP.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Text("Format video", style = MaterialTheme.typography.titleMedium)
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+            ) {
+                VideoFormat.entries.forEach { f ->
+                    androidx.compose.material3.FilterChip(
+                        selected = state.videoFormat == f,
+                        onClick = { vm.onVideoFormatChange(f) },
+                        label = { Text(f.label) },
+                    )
+                }
+            }
+            Text("Resolusi maks", style = MaterialTheme.typography.titleMedium)
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+            ) {
+                VideoQuality.entries.forEach { q ->
+                    androidx.compose.material3.FilterChip(
+                        selected = state.videoQuality == q,
+                        onClick = { vm.onVideoQualityChange(q) },
+                        label = { Text(q.label) },
+                    )
+                }
+            }
+        }
+        if (state.content is HomeContent.Playlist || state.content is HomeContent.Batch) {
+            OutlinedTextField(
+                value = state.rangeText,
+                onValueChange = vm::onRangeChange,
+                label = { Text("Range (opsional)") },
+                placeholder = { Text("mis. 1-10,15,20-30 — kosong = semua") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = state.rangeError != null,
             )
+            state.rangeError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Lewati yang sudah ada", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Jangan antre ulang link yang sudah ada di riwayat.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = state.skipExisting, onCheckedChange = vm::onSkipChange)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Subfolder per playlist", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Simpan ke subfolder sesuai nama playlist.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = state.subfolderAuto, onCheckedChange = vm::onSubfolderChange)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Opsi lanjutan", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Subtitle, chapters, SponsorBlock, normalisasi, thumbnail terpisah.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = state.showAdvanced, onCheckedChange = { vm.toggleAdvanced() })
+        }
+        if (state.showAdvanced) {
+            AdvancedOptions(state = state, vm = vm)
         }
         if (estimate != null) {
             Text(
@@ -625,6 +958,130 @@ private fun OptionsSection(
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun AdvancedOptions(state: HomeScreenState, vm: HomeViewModel) {
+    val post = state.post
+    Column(
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = AppSpacing.sm),
+    ) {
+        Text("Subtitle (video)", style = MaterialTheme.typography.titleSmall)
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+        ) {
+            SubtitleMode.entries.forEach { m ->
+                androidx.compose.material3.FilterChip(
+                    selected = post.subtitleMode == m,
+                    onClick = { vm.onPostChange { it.copy(subtitleMode = m) } },
+                    label = { Text(m.label) },
+                )
+            }
+        }
+        if (post.subtitleMode != SubtitleMode.NONE && state.mediaKind == MediaKind.VIDEO) {
+            OutlinedTextField(
+                value = post.subLangs,
+                onValueChange = { v -> vm.onPostChange { it.copy(subLangs = v.take(60)) } },
+                label = { Text("Bahasa subtitle") },
+                placeholder = { Text("en,id") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+        }
+        CheckRow("Embed chapters", "Simpan penanda bab ke file.", post.embedChapters) { v ->
+            vm.onPostChange { it.copy(embedChapters = v) }
+        }
+        CheckRow("SponsorBlock", "Hapus segmen sponsor (konten publik).", post.sponsorBlock) { v ->
+            vm.onPostChange { it.copy(sponsorBlock = v) }
+        }
+        CheckRow("Normalisasi loudness", "Samakan volume (EBU R128).", post.normalizeAudio) { v ->
+            vm.onPostChange { it.copy(normalizeAudio = v) }
+        }
+        CheckRow("Simpan thumbnail terpisah", "Simpan cover sebagai JPG di samping file.", post.saveThumbSeparate) { v ->
+            vm.onPostChange { it.copy(saveThumbSeparate = v) }
+        }
+        CheckRow("Hapus metadata (privasi)", "Jangan embed tag/thumbnail apa pun.", post.stripMetadata) { v ->
+            vm.onPostChange { it.copy(stripMetadata = v) }
+        }
+    }
+}
+
+@Composable
+private fun CheckRow(title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                desc,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Checkbox(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ProfilesRow(
+    profiles: List<DownloadProfile>,
+    active: String?,
+    onApply: (DownloadProfile) -> Unit,
+    onSave: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    var showSave by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Profil", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { showSave = true }) { Text("Simpan saat ini") }
+        }
+        if (profiles.isNotEmpty()) {
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+            ) {
+                profiles.forEach { p ->
+                    androidx.compose.material3.FilterChip(
+                        selected = active == p.name,
+                        onClick = { onApply(p) },
+                        label = { Text(p.name) },
+                        trailingIcon = {
+                            IconButton(onClick = { onDelete(p.name) }, modifier = Modifier.height(AppSpacing.lg)) {
+                                Icon(Icons.Filled.Clear, contentDescription = "Hapus profil ${p.name}")
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+    if (showSave) {
+        AlertDialog(
+            onDismissRequest = { showSave = false },
+            title = { Text("Simpan profil") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(40) },
+                    label = { Text("Nama profil") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onSave(name)
+                    showSave = false
+                    name = ""
+                }) { Text("Simpan") }
+            },
+            dismissButton = { TextButton(onClick = { showSave = false }) { Text("Batal") } },
+        )
     }
 }
 

@@ -2,6 +2,7 @@ package com.example.yt2mp3.di
 
 import android.content.Context
 import com.example.yt2mp3.data.database.AppDatabase
+import com.example.yt2mp3.data.engine.EngineTuning
 import com.example.yt2mp3.data.engine.EngineVersionManager
 import com.example.yt2mp3.data.engine.YtDlpEngine
 import com.example.yt2mp3.data.engine.YtDlpEngineImpl
@@ -11,6 +12,7 @@ import com.example.yt2mp3.data.repository.MetadataRepositoryImpl
 import com.example.yt2mp3.data.repository.SettingsRepositoryImpl
 import com.example.yt2mp3.data.storage.SafStorageManager
 import com.example.yt2mp3.data.storage.StorageManager
+import com.example.yt2mp3.data.util.ArgSplitter
 import com.example.yt2mp3.domain.repository.DownloadRepository
 import com.example.yt2mp3.domain.repository.MetadataRepository
 import com.example.yt2mp3.domain.repository.SettingsRepository
@@ -19,10 +21,15 @@ import com.example.yt2mp3.domain.usecase.RetryDownloadUseCase
 import com.example.yt2mp3.domain.usecase.StartDownloadUseCase
 import com.example.yt2mp3.domain.usecase.UpdateEngineUseCase
 import com.example.yt2mp3.service.DownloadForegroundService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** Manual DI container (no Hilt) — interfaces keep engine/storage testable (PRD §53.5). */
 class AppContainer(private val context: Context) {
     private val db by lazy { AppDatabase.get(context) }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val downloads: DownloadRepository by lazy { DownloadRepositoryImpl(db.downloadDao()) }
     val settings: SettingsRepository by lazy { SettingsRepositoryImpl(context) }
@@ -32,7 +39,30 @@ class AppContainer(private val context: Context) {
     }
 
     val queueRunner: QueueRunner by lazy {
-        QueueRunner(downloads, settings, engine, storage)
+        QueueRunner(downloads, settings, engine, storage, context)
+    }
+
+    /**
+     * Pushes network/retry settings into the engine snapshot (no credentials ever).
+     * Called at queue start and after Settings changes.
+     */
+    suspend fun refreshTuning() {
+        val impl = engine as? YtDlpEngineImpl ?: return
+        impl.tuning = EngineTuning(
+            retries = settings.getMaxRetries().coerceIn(0, 10),
+            fragmentRetries = settings.getFragmentRetries().coerceIn(0, 10),
+            rateLimitKbps = settings.getRateLimitKbps().coerceAtLeast(0),
+            proxyUrl = settings.getProxyUrl().trim(),
+            userAgent = settings.getUserAgent(),
+            customArgs = ArgSplitter.split(settings.getCustomYtdlpArgs()).take(40),
+            customFfmpegArgs = settings.getCustomFfmpegArgs().trim(),
+            customFormat = settings.getCustomFormat().trim(),
+            debug = settings.getDebugMode(),
+        )
+    }
+
+    fun refreshTuningAsync() {
+        scope.launch { runCatching { refreshTuning() } }
     }
 
     val metadataRepo: MetadataRepository by lazy { MetadataRepositoryImpl(engine) }

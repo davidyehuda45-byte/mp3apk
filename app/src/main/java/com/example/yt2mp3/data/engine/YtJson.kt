@@ -1,5 +1,6 @@
 package com.example.yt2mp3.data.engine
 
+import com.example.yt2mp3.data.util.SupportedSites
 import com.example.yt2mp3.data.util.UrlValidator
 import com.example.yt2mp3.domain.model.VideoEntry
 import com.example.yt2mp3.domain.model.VideoMetadata
@@ -14,17 +15,45 @@ object YtJson {
     fun metadata(cleanUrl: String, json: JSONObject): VideoMetadata {
         val id = json.str("id")
         val duration = json.durationSecs()
+        val extractor = json.str("extractor")?.lowercase()
+        val isYoutube = extractor == null || extractor.contains("youtube")
+        // YouTube: i.ytimg.com JPEG renders as ID3 cover in most players.
+        // Generic: use extractor thumbnail (may be webp/jpg/png).
+        val thumb = if (isYoutube && id != null) {
+            "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+        } else {
+            bestThumbnail(json) ?: json.str("thumbnail")
+        }
         return VideoMetadata(
             sourceUrl = cleanUrl,
-            title = json.str("title") ?: json.str("fulltitle") ?: "Unknown title",
-            artist = (json.str("artist") ?: json.str("uploader") ?: json.str("channel"))?.trim(),
+            title = json.str("title") ?: json.str("fulltitle") ?: json.str("track") ?: "Unknown title",
+            artist = (json.str("artist") ?: json.str("uploader") ?: json.str("channel") ?: json.str("creator"))?.trim(),
             durationSecs = duration,
-            // i.ytimg.com JPEG: webp thumbnails don't render as ID3 cover art in most players.
-            thumbnailUrl = id?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" } ?: json.str("thumbnail"),
+            thumbnailUrl = thumb,
             bestAudioBytes = json.sizeBytes(duration),
             m4aBytes = bestM4a(json.optJSONArray("formats"))?.sizeBytes(duration),
             playlistUrl = UrlValidator.playlistOfVideo(cleanUrl),
+            extractor = extractor,
+            siteName = SupportedSites.siteNameForUrl(cleanUrl),
         )
+    }
+
+    private fun bestThumbnail(json: JSONObject): String? {
+        val thumbs = json.optJSONArray("thumbnails") ?: return null
+        var best: String? = null
+        var bestArea = -1
+        for (i in 0 until thumbs.length()) {
+            val t = thumbs.optJSONObject(i) ?: continue
+            val url = t.str("url") ?: continue
+            val w = t.optInt("width", -1)
+            val h = t.optInt("height", -1)
+            val area = if (w > 0 && h > 0) w * h else 0
+            if (area >= bestArea) {
+                bestArea = area
+                best = url
+            }
+        }
+        return best
     }
 
     private fun bestM4a(formats: JSONArray?): JSONObject? {
@@ -45,23 +74,49 @@ object YtJson {
         val dotted = dottedMinutes(entries)
         for (i in 0 until entries.length()) {
             val e = entries.optJSONObject(i) ?: continue
-            val id = e.str("id") ?: continue
-            val url = UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/watch?v=$id") ?: continue
-            val title = e.str("title") ?: continue
+            val url = entryUrl(e) ?: continue
+            val title = e.str("title") ?: e.str("fulltitle") ?: e.str("track") ?: continue
             val duration = e.listDurationSecs(dotted)
             // "[Private video]" / "[Deleted video]" placeholders can't be downloaded.
             if (duration == null && title.startsWith("[") && title.endsWith("]")) continue
             if (e.str("live_status") == "is_live") continue
+            val id = e.str("id")
+            val extractor = e.str("extractor_key") ?: e.str("extractor")
+            val thumb = if (id != null && (extractor == null || extractor.contains("youtube", ignoreCase = true))) {
+                "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+            } else {
+                bestThumbnail(e) ?: e.str("thumbnail")
+            }
             out += VideoEntry(
                 url = url,
                 title = title,
-                channel = (e.str("channel") ?: e.str("uploader"))?.trim(),
+                channel = (e.str("channel") ?: e.str("uploader") ?: e.str("artist"))?.trim(),
                 durationSecs = duration,
                 // hqdefault doubles as cover art; lists show the tiny variant (see listThumb).
-                thumbnailUrl = "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+                thumbnailUrl = thumb,
+                extractor = extractor?.lowercase(),
             )
         }
         return out
+    }
+
+    /**
+     * Entry URL for generic extractors. Prefers real page URLs over
+     * stream URLs: webpage_url > url (http only) > YouTube watch URL.
+     */
+    private fun entryUrl(e: JSONObject): String? {
+        e.str("webpage_url")?.takeIf { it.startsWith("http") }?.let {
+            val n = UrlValidator.normalizeSupportedUrl(it)
+            if (UrlValidator.isSupported(n)) return n
+        }
+        e.str("url")?.takeIf { it.startsWith("http") }?.let {
+            if (UrlValidator.isSupported(it)) return it
+        }
+        val id = e.str("id") ?: return null
+        val extractor = (e.str("extractor_key") ?: e.str("extractor"))?.lowercase()
+        // Bare ids from generic flat playlists are not downloadable without a page URL.
+        if (extractor != null && !extractor.contains("youtube")) return null
+        return UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/watch?v=$id")
     }
 
     fun title(json: JSONObject): String? = json.str("title")
@@ -102,7 +157,7 @@ object YtJson {
         return if (secs < 60) mins * 60 + secs else raw.toLong()
     }
 
-    /** Exact size when YouTube reports it, else bitrate × duration. */
+    /** Exact size when reported, else bitrate × duration. */
     private fun JSONObject.sizeBytes(durationSecs: Long?): Long? {
         optLong("filesize", -1).takeIf { it > 0 }?.let { return it }
         optLong("filesize_approx", -1).takeIf { it > 0 }?.let { return it }

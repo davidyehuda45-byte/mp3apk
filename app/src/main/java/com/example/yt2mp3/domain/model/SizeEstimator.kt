@@ -4,7 +4,7 @@ import java.util.Locale
 
 /** Data-usage and file-size estimates shown before downloading. Pure logic, unit-tested. */
 object SizeEstimator {
-    /** Typical YouTube audio stream bitrate when the exact size is unknown. */
+    /** Typical audio stream bitrate when the exact size is unknown. */
     private const val TYPICAL_SOURCE_KBPS = 130
 
     data class Estimate(val downloadBytes: Long, val fileBytes: Long, val exact: Boolean)
@@ -28,9 +28,10 @@ object SizeEstimator {
         val fraction = sectionFraction(duration, sectionStart, sectionEnd)
         val download = (fullSource * fraction).toLong()
         val keptSecs = duration?.let { it * fraction }
-        val file = when (format) {
-            AudioFormat.M4A -> download
-            AudioFormat.MP3 -> keptSecs?.let { (it * quality.bitrateKbps * 125).toLong() } ?: download
+        val file = when {
+            format.usesQuality -> keptSecs?.let { (it * quality.bitrateKbps * 125).toLong() } ?: download
+            // Lossless/copy formats: file is roughly the downloaded stream (FLAC/WAV can be larger).
+            else -> download
         }
         return Estimate(download, file, exact = known != null)
     }
@@ -38,8 +39,21 @@ object SizeEstimator {
     fun forDurations(durations: List<Long?>, format: AudioFormat, quality: AudioQuality): Estimate {
         val total = durations.sumOf { it ?: 0L }
         val download = total * TYPICAL_SOURCE_KBPS * 125
-        val file = if (format == AudioFormat.MP3) total * quality.bitrateKbps * 125 else download
+        val file = if (format.usesQuality) total * quality.bitrateKbps * 125 else download
         return Estimate(download, file, exact = false)
+    }
+
+    /** Rough video estimate: duration × quality bitrate (video+audio). Never exact. */
+    fun forVideoDownload(durationSecs: Long?, quality: VideoQuality): Estimate? {
+        val d = durationSecs?.takeIf { it > 0 } ?: return null
+        val bytes = d * quality.approxKbps * 125
+        return Estimate(bytes, bytes, exact = false)
+    }
+
+    fun forVideoDurations(durations: List<Long?>, quality: VideoQuality): Estimate {
+        val total = durations.sumOf { it ?: 0L }
+        val bytes = total * quality.approxKbps * 125
+        return Estimate(bytes, bytes, exact = false)
     }
 
     private fun sectionFraction(duration: Long?, start: Int?, end: Int?): Double {

@@ -25,6 +25,7 @@ class QueueResumeReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 val app = context.applicationContext as Yt2Mp3App
+                ScheduleManager.rescheduleIfEnabled(context)
                 if (app.downloads.hasActive() || app.downloads.nextQueued() != null) {
                     app.queueRunner.kick()
                     DownloadForegroundService.start(context)

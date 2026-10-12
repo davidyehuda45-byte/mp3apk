@@ -6,13 +6,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.yt2mp3.domain.model.ThemeMode
 
 /**
  * Restrained visual language (Design §4–§8):
@@ -62,6 +66,24 @@ private val DarkScheme = darkColorScheme(
     error = Color(0xFFFFB4AB),
 )
 
+private val AmoledScheme = darkColorScheme(
+    primary = AccentDark,
+    onPrimary = Color.Black,
+    primaryContainer = Color(0xFF0C4A32),
+    onPrimaryContainer = Color(0xFFC9F2DC),
+    secondary = Color(0xFF9AA3A6),
+    background = Color.Black,
+    onBackground = Color(0xFFE8EAEB),
+    surface = Color.Black,
+    onSurface = Color(0xFFE8EAEB),
+    surfaceVariant = Color(0xFF111111),
+    onSurfaceVariant = Color(0xFF9AA3A6),
+    surfaceContainerHighest = Color(0xFF1A1A1A),
+    outline = Color(0xFF2A2A2A),
+    outlineVariant = Color(0xFF1E1E1E),
+    error = Color(0xFFFFB4AB),
+)
+
 private val AppShapes = Shapes(
     small = RoundedCornerShape(8.dp),
     medium = RoundedCornerShape(12.dp),
@@ -90,11 +112,27 @@ private val AppTypography = Typography(
 /** Material 3 theme; dark mode is a first-class surface ramp (§42). */
 @Composable
 fun YT2MP3Theme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    mode: ThemeMode = ThemeMode.SYSTEM,
+    dynamic: Boolean = true,
     content: @Composable () -> Unit,
 ) {
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (mode) {
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK, ThemeMode.AMOLED -> true
+        ThemeMode.SYSTEM -> systemDark
+    }
+    val context = LocalContext.current
+    val scheme = when {
+        mode == ThemeMode.AMOLED -> AmoledScheme
+        dynamic && android.os.Build.VERSION.SDK_INT >= 31 -> {
+            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        dark -> DarkScheme
+        else -> LightScheme
+    }
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkScheme else LightScheme,
+        colorScheme = scheme,
         shapes = AppShapes,
         typography = AppTypography,
         content = content,

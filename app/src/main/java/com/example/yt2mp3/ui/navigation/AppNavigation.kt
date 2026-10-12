@@ -19,6 +19,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -31,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.yt2mp3.ui.downloads.DownloadsScreen
 import com.example.yt2mp3.ui.history.HistoryScreen
 import com.example.yt2mp3.ui.home.HomeScreen
+import com.example.yt2mp3.ui.player.PlayerScreen
 import com.example.yt2mp3.ui.settings.SettingsScreen
 import com.example.yt2mp3.ui.theme.AppMotion
 import com.example.yt2mp3.ui.theme.rememberReducedMotion
@@ -40,6 +44,7 @@ sealed class Route(val path: String, val label: String, val icon: ImageVector) {
     data object Downloads : Route("downloads", "Downloads", Icons.Filled.Download)
     data object History : Route("history", "History", Icons.Filled.History)
     data object Settings : Route("settings", "Settings", Icons.Filled.Settings)
+    data object Player : Route("player/{id}", "Player", Icons.Filled.Home)
 }
 
 private fun goTab(nav: NavHostController, tab: Route) {
@@ -68,6 +73,19 @@ private fun tabExit(reduced: Boolean): ExitTransition =
 fun AppNavigation(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
     val nav = rememberNavController()
     val reduced = rememberReducedMotion()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var locked by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Boolean?>(null) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val app = context.applicationContext as com.example.yt2mp3.Yt2Mp3App
+        val enabled = runCatching { app.settings.getLockEnabled() }.getOrDefault(false)
+        val hash = runCatching { app.settings.getPinHash() }.getOrDefault("")
+        locked = enabled && hash.isNotEmpty()
+    }
+    if (locked == null) return
+    if (locked == true) {
+        com.example.yt2mp3.ui.lock.LockScreen(onUnlocked = { locked = false })
+        return
+    }
     val tabs = listOf(Route.Home, Route.Downloads, Route.History, Route.Settings)
     Scaffold(
         bottomBar = {
@@ -101,9 +119,23 @@ fun AppNavigation(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                 DownloadsScreen(onStartDownloading = { goTab(nav, Route.Home) })
             }
             composable(Route.History.path) {
-                HistoryScreen(onStartDownloading = { goTab(nav, Route.Home) })
+                HistoryScreen(
+                    onStartDownloading = { goTab(nav, Route.Home) },
+                    onPlay = { id -> nav.navigate("player/$id") },
+                )
             }
             composable(Route.Settings.path) { SettingsScreen() }
+            composable(
+                Route.Player.path,
+                arguments = listOf(androidx.navigation.NavType.LongType.let {
+                    androidx.navigation.navArgument("id") { type = it }
+                }),
+            ) { entry ->
+                PlayerScreen(
+                    itemId = entry.arguments?.getLong("id") ?: -1L,
+                    onBack = { nav.popBackStack() },
+                )
+            }
         }
     }
 }

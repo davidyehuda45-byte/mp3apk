@@ -16,7 +16,7 @@ class DownloadStatusConverter {
         runCatching { DownloadStatus.valueOf(s) }.getOrDefault(DownloadStatus.FAILED)
 }
 
-@Database(entities = [DownloadEntity::class], version = 3, exportSchema = false)
+@Database(entities = [DownloadEntity::class], version = 4, exportSchema = false)
 @TypeConverters(DownloadStatusConverter::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadDao(): DownloadDao
@@ -36,13 +36,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE downloads ADD COLUMN mediaKind TEXT NOT NULL DEFAULT 'AUDIO'")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN videoFormat TEXT")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN videoQuality TEXT")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN subtitleMode TEXT NOT NULL DEFAULT 'NONE'")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN subLangs TEXT NOT NULL DEFAULT 'en,id'")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN embedChapters INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN sponsorBlock INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN normalizeAudio INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN saveThumb INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN stripMetadata INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN subfolder TEXT")
+                db.execSQL("ALTER TABLE downloads ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile private var instance: AppDatabase? = null
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "yt2mp3.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
     }
 }
