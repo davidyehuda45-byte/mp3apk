@@ -76,14 +76,18 @@ class QueueRunner(
 
     private suspend fun pump() {
         refreshTuning()
-        val parallel = runCatching { settings.getMaxParallel() }.getOrDefault(1).coerceIn(1, 3)
-        // Wi-Fi only: wait instead of burning mobile data.
-        if (runCatching { settings.getWifiOnly() }.getOrDefault(false) && !isWifiConnected()) {
-            markWaitingForWifi()
+        // Wi-Fi only: wait (cancellable) instead of burning mobile data.
+        while (runCatching { settings.getWifiOnly() }.getOrDefault(false) && !isWifiConnected()) {
+            AppLog.i("QUEUE", "waiting for Wi-Fi")
+            runCatching {
+                downloads.nextQueued()?.let {
+                    downloads.updateProgress(it.id, null, "Menunggu Wi-Fi…")
+                    emit(it.id, DownloadStatus.QUEUED, null, "Menunggu Wi-Fi…")
+                }
+            }
             delay(60_000)
-            if (worker?.isActive == true) kick()
-            return
         }
+        val parallel = runCatching { settings.getMaxParallel() }.getOrDefault(1).coerceIn(1, 3)
         coroutineScope {
             (0 until parallel).map {
                 async { workerLoop() }
@@ -109,11 +113,6 @@ class QueueRunner(
             if (next == Long.MIN_VALUE) continue
             runItem(next)
         }
-    }
-
-    private suspend fun markWaitingForWifi() {
-        // Surface the wait state on queued items without consuming them.
-        AppLog.i("QUEUE", "waiting for Wi-Fi")
     }
 
     private suspend fun refreshTuning() {

@@ -54,4 +54,27 @@ object SupportedSites {
         val base = host.removePrefix("www.").substringBefore('.')
         return base.replaceFirstChar { it.uppercase() }.takeIf { it.isNotBlank() }
     }
+
+    /** Quick-pick chips on Home. Icon index maps to a Material icon in UI (no emoji, no brand assets). */
+    data class QuickSite(val name: String, val hosts: List<String>, val icon: Int, val example: String)
+
+    val quick = listOf(
+        QuickSite("YouTube", listOf("youtube.com", "youtu.be", "music.youtube.com"), 0, "youtube.com/watch?v=… / youtu.be/…"),
+        QuickSite("TikTok", listOf("tiktok.com"), 1, "tiktok.com/@akun/video/…"),
+        QuickSite("Instagram", listOf("instagram.com"), 2, "instagram.com/reel/…"),
+        QuickSite("Facebook", listOf("facebook.com", "fb.watch", "fb.com"), 3, "facebook.com/reel/… / fb.watch/…"),
+        QuickSite("X", listOf("x.com", "twitter.com"), 4, "x.com/akun/status/…"),
+        QuickSite("SoundCloud", listOf("soundcloud.com"), 5, "soundcloud.com/artis/judul"),
+    )
+
+    /** URLs in [text] belonging to this quick site (host match). */
+    fun matchingUrls(site: QuickSite, text: String): List<String> {
+        val out = LinkedHashSet<String>()
+        val found = UrlValidator.extractAllSupportedUrls(text)
+        for (u in found) {
+            val host = runCatching { java.net.URI(u).host?.lowercase() }.getOrNull() ?: continue
+            if (site.hosts.any { h -> host == h || host.endsWith(".$h") }) out += u
+        }
+        return out.toList()
+    }
 }

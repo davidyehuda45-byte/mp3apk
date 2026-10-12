@@ -27,6 +27,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
@@ -34,7 +36,11 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -284,6 +290,19 @@ fun HomeScreen(
             TextButton(onClick = { showSites = true }) {
                 Text("Situs didukung (1000+ via yt-dlp) — lihat daftar")
             }
+            SiteChipsRow(
+                onPick = { site ->
+                    val text = clipboard.getText()?.text.orEmpty()
+                    val urls = com.example.yt2mp3.data.util.SupportedSites.matchingUrls(site, text)
+                    if (urls.isNotEmpty()) {
+                        vm.onInputChange(urls.joinToString("\n").take(2000))
+                        pastedTick = true
+                        submit()
+                    } else {
+                        vm.showNotice("Salin/tempel link ${site.name} dulu. Contoh: ${site.example}")
+                    }
+                },
+            )
 
             HorizontalDivider()
 
@@ -292,13 +311,15 @@ fun HomeScreen(
             val downloadable = state.content is HomeContent.Video ||
                 state.content is HomeContent.Playlist || state.content is HomeContent.Batch
             if (downloadable) {
-                ProfilesRow(
-                    profiles = state.profiles,
-                    active = state.activeProfile,
-                    onApply = vm::applyProfile,
-                    onSave = vm::saveProfile,
-                    onDelete = vm::deleteProfile,
-                )
+                if (!state.simpleMode) {
+                    ProfilesRow(
+                        profiles = state.profiles,
+                        active = state.activeProfile,
+                        onApply = vm::applyProfile,
+                        onSave = vm::saveProfile,
+                        onDelete = vm::deleteProfile,
+                    )
+                }
                 OptionsSection(
                     state = state,
                     vm = vm,
@@ -814,6 +835,45 @@ private fun BatchSection(
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
+private fun SiteChipsRow(
+    onPick: (com.example.yt2mp3.data.util.SupportedSites.QuickSite) -> Unit,
+) {
+    val icons = listOf(
+        Icons.Filled.PlayArrow,
+        Icons.Filled.MusicNote,
+        Icons.Filled.CameraAlt,
+        Icons.Filled.ThumbUp,
+        Icons.Filled.ChatBubble,
+        Icons.Filled.LibraryMusic,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+        Text(
+            "Pintasan situs — ketuk, lalu tempel linknya",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+        ) {
+            com.example.yt2mp3.data.util.SupportedSites.quick.forEach { site ->
+                androidx.compose.material3.FilterChip(
+                    selected = false,
+                    onClick = { onPick(site) },
+                    label = { Text(site.name) },
+                    leadingIcon = {
+                        Icon(
+                            icons.getOrElse(site.icon) { Icons.Filled.Public },
+                            contentDescription = null,
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
 private fun OptionsSection(
     state: HomeScreenState,
     vm: HomeViewModel,
@@ -913,42 +973,46 @@ private fun OptionsSection(
             state.rangeError?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
+            if (!state.simpleMode) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Lewati yang sudah ada", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Jangan antre ulang link yang sudah ada di riwayat.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = state.skipExisting, onCheckedChange = vm::onSkipChange)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Subfolder per playlist", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Simpan ke subfolder sesuai nama playlist.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = state.subfolderAuto, onCheckedChange = vm::onSubfolderChange)
+                }
+            }
+        }
+        if (!state.simpleMode) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Lewati yang sudah ada", style = MaterialTheme.typography.bodyLarge)
+                    Text("Opsi lanjutan", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Jangan antre ulang link yang sudah ada di riwayat.",
+                        "Subtitle, chapters, SponsorBlock, normalisasi, thumbnail terpisah.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(checked = state.skipExisting, onCheckedChange = vm::onSkipChange)
+                Switch(checked = state.showAdvanced, onCheckedChange = { vm.toggleAdvanced() })
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Subfolder per playlist", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Simpan ke subfolder sesuai nama playlist.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = state.subfolderAuto, onCheckedChange = vm::onSubfolderChange)
+            if (state.showAdvanced) {
+                AdvancedOptions(state = state, vm = vm)
             }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Opsi lanjutan", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "Subtitle, chapters, SponsorBlock, normalisasi, thumbnail terpisah.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(checked = state.showAdvanced, onCheckedChange = { vm.toggleAdvanced() })
-        }
-        if (state.showAdvanced) {
-            AdvancedOptions(state = state, vm = vm)
         }
         if (estimate != null) {
             Text(

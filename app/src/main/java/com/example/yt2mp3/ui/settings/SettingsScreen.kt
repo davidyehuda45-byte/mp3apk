@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,13 +17,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Help
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -131,6 +143,8 @@ class SettingsViewModel(app: Application) : ViewModel() {
         private set
     var saveHistory by mutableStateOf(true)
         private set
+    var simpleMode by mutableStateOf(true)
+        private set
     var autoPaste by mutableStateOf(false)
         private set
     var dynamicColor by mutableStateOf(true)
@@ -193,6 +207,7 @@ class SettingsViewModel(app: Application) : ViewModel() {
             customFormat = s.getCustomFormat()
             debugMode = s.getDebugMode()
             saveHistory = s.getSaveHistory()
+            simpleMode = s.getSimpleMode()
             autoPaste = s.getAutoPaste()
             dynamicColor = s.getDynamicColor()
             lockEnabled = s.getLockEnabled()
@@ -363,6 +378,11 @@ class SettingsViewModel(app: Application) : ViewModel() {
     fun setHistory(v: Boolean) {
         saveHistory = v
         viewModelScope.launch { yt.settings.setSaveHistory(v) }
+    }
+
+    fun setSimple(v: Boolean) {
+        simpleMode = v
+        viewModelScope.launch { yt.settings.setSimpleMode(v) }
     }
 
     fun updateAutoPaste(v: Boolean) {
@@ -596,8 +616,18 @@ fun SettingsScreen(
     }
 
     // Almost static screen (§29): sections, plain selection, no custom animation.
+    var section by remember { mutableStateOf<SettingsSection?>(null) }
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Text("Settings") })
+        TopAppBar(
+            title = { Text(section?.title ?: "Settings") },
+            navigationIcon = {
+                if (section != null) {
+                    IconButton(onClick = { section = null }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
+                    }
+                }
+            },
+        )
         Column(
             Modifier
                 .fillMaxSize()
@@ -609,6 +639,10 @@ fun SettingsScreen(
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
             }
 
+            if (section == null) {
+                SettingsMenu(onOpen = { section = it })
+            }
+            if (section == SettingsSection.STORAGE) {
             Section("Penyimpanan")
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -654,7 +688,8 @@ fun SettingsScreen(
                 OutlinedButton(onClick = { backupOpen.launch(arrayOf("application/json", "text/plain")) }) { Text("Restore") }
             }
 
-            HDiv()
+            }
+            if (section == SettingsSection.OUTPUT) {
             Section("Output default")
             Text("Jenis", style = MaterialTheme.typography.titleSmall)
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -716,7 +751,8 @@ fun SettingsScreen(
             ToggleRow("Thumbnail terpisah", "Simpan cover JPG.", vm.postThumb) { vm.togglePost("thumb", it) }
             ToggleRow("Hapus metadata (privasi)", "Tanpa embed tag/thumbnail.", vm.postStrip) { vm.togglePost("strip", it) }
 
-            HDiv()
+            }
+            if (section == SettingsSection.QUEUE) {
             Section("Antrean & jaringan")
             CounterRow("Unduhan paralel", vm.parallel, 1, 3, vm::updateParallel)
             CounterRow("Auto-retry gagal", vm.retries, 0, 5, vm::updateRetries)
@@ -731,7 +767,8 @@ fun SettingsScreen(
             )
             ToggleRow("Hanya saat Wi-Fi", "Jeda antrean di data seluler.", vm.wifiOnly, vm::setWifi)
 
-            HDiv()
+            }
+            if (section == SettingsSection.SCHEDULE) {
             Section("Jadwal & RSS publik")
             ToggleRow(
                 "Unduh terjadwal ${"%02d:%02d".format(vm.schedHour, vm.schedMin)}",
@@ -772,7 +809,8 @@ fun SettingsScreen(
             }
             OutlinedButton(onClick = vm::rssCheckNow, enabled = !vm.checking) { Text("Periksa RSS sekarang") }
 
-            HDiv()
+            }
+            if (section == SettingsSection.DISPLAY) {
             Section("Tampilan")
             androidx.compose.foundation.layout.FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
@@ -783,8 +821,9 @@ fun SettingsScreen(
             }
             ToggleRow("Warna dinamis (Material You)", "Berlaku setelah restart.", vm.dynamicColor, vm::setDynamic)
             ToggleRow("Tempel otomatis (clipboard)", "Saat buka app dan input kosong.", vm.autoPaste, vm::updateAutoPaste)
-
-            HDiv()
+            ToggleRow("Mode sederhana", "Sembunyikan profil & opsi lanjutan di Home.", vm.simpleMode, vm::setSimple)
+            }
+            if (section == SettingsSection.PRIVACY) {
             Section("Privasi & kunci")
             ToggleRow("Simpan riwayat", "Matikan = mode incognito (file tetap tersimpan).", vm.saveHistory, vm::setHistory)
             ToggleRow("Kunci aplikasi (PIN)", if (vm.hasPin) "PIN terpasang." else "Belum ada PIN.", vm.lockEnabled && vm.hasPin) {
@@ -797,7 +836,8 @@ fun SettingsScreen(
                 }
             }
 
-            HDiv()
+            }
+            if (section == SettingsSection.ADVANCED) {
             Section("Jaringan lanjutan (tanpa login)")
             OutlinedTextField(
                 value = vm.proxy,
@@ -843,7 +883,8 @@ fun SettingsScreen(
             )
             ToggleRow("Mode debug", "Log verbose + info diagnostik.", vm.debugMode, vm::setDebug)
 
-            HDiv()
+            }
+            if (section == SettingsSection.ENGINE) {
             Section("Engine")
             Text(
                 "yt-dlp ${engineVersion ?: "bundled"}",
@@ -864,7 +905,8 @@ fun SettingsScreen(
                 Button(onClick = vm::doUpdate, enabled = !vm.checking) { Text("Update engine") }
             }
 
-            HDiv()
+            }
+            if (section == SettingsSection.HELP) {
             Section("Bantuan & maintenance")
             Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                 OutlinedButton(onClick = { showLog = true }) { Text("Lihat log") }
@@ -881,7 +923,8 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            HDiv()
+            }
+            if (section == SettingsSection.BATTERY) {
             Section("Background downloads")
             Text(
                 "If downloads stop with the screen off, exempt YT2MP3 from battery optimization.",
@@ -898,7 +941,8 @@ fun SettingsScreen(
                 }
             }) { Text("Open battery settings") }
 
-            HDiv()
+            }
+            if (section == SettingsSection.LEGAL) {
             Section("Legal")
             Text(
                 "YT2MP3 1.4.0 — hanya konten publik yang boleh disimpan untuk offline pribadi. " +
@@ -907,6 +951,7 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            }
         }
     }
 
@@ -999,6 +1044,64 @@ fun SettingsScreen(
                 TextButton(onClick = { showPin = false; pin1 = ""; pin2 = "" }) { Text("Batal") }
             },
         )
+    }
+}
+
+enum class SettingsSection(val title: String, val desc: String) {
+    STORAGE("Penyimpanan", "Folder, pola nama, backup"),
+    OUTPUT("Output", "Audio/video, subtitle, chapters"),
+    QUEUE("Antrean & jaringan", "Paralel, retry, Wi-Fi"),
+    SCHEDULE("Jadwal & RSS", "Otomatis harian, channel"),
+    DISPLAY("Tampilan", "Tema, mode sederhana"),
+    PRIVACY("Privasi & kunci", "PIN, incognito"),
+    ADVANCED("Lanjutan", "Proxy, argumen kustom"),
+    ENGINE("Engine", "Update yt-dlp"),
+    HELP("Bantuan", "Log, changelog, diagnostik"),
+    BATTERY("Background", "Agar jalan saat layar mati"),
+    LEGAL("Legal", "Hak cipta & batasan"),
+}
+
+@Composable
+private fun SettingsMenu(onOpen: (SettingsSection) -> Unit) {
+    val icons = mapOf(
+        SettingsSection.STORAGE to Icons.Filled.FolderOpen,
+        SettingsSection.OUTPUT to Icons.Filled.MusicNote,
+        SettingsSection.QUEUE to Icons.AutoMirrored.Filled.List,
+        SettingsSection.SCHEDULE to Icons.Filled.Schedule,
+        SettingsSection.DISPLAY to Icons.Filled.Palette,
+        SettingsSection.PRIVACY to Icons.Filled.Lock,
+        SettingsSection.ADVANCED to Icons.Filled.Tune,
+        SettingsSection.ENGINE to Icons.Filled.SystemUpdate,
+        SettingsSection.HELP to Icons.AutoMirrored.Filled.Help,
+        SettingsSection.BATTERY to Icons.Filled.Info,
+        SettingsSection.LEGAL to Icons.Filled.Info,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+        SettingsSection.entries.forEach { s ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpen(s) }
+                    .padding(vertical = AppSpacing.sm),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.group),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    icons[s] ?: Icons.Filled.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(s.title, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        s.desc,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            HorizontalDivider()
+        }
     }
 }
 

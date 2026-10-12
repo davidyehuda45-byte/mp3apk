@@ -131,5 +131,7 @@ interface SettingsRepository {
     suspend fun setRssAuto(enabled: Boolean)
     suspend fun getProfilesJson(): String
     suspend fun setProfilesJson(json: String)
+    suspend fun getSimpleMode(): Boolean
+    suspend fun setSimpleMode(enabled: Boolean)
     suspend fun clearAll()
 }

@@ -23,8 +23,12 @@ tanpa server, tanpa akun, tanpa iklan.
   (auto-download video baru, maks 5).
 - **Library**: pemutar bawaan (audio/video + sleep timer), favorit, cari,
   sortir, cek duplikat, rename, bagikan file/link, buka dengan aplikasi lain.
-- **Tampilan**: terang/gelap/AMOLED, Material You dinamis, tempel otomatis
+- **Tampilan**: terang/gelap/AMOLED, Material You dinamis, mode sederhana
+  (default) vs advanced, chip pintasan situs (YouTube/TikTok/IG/FB/X/
+  SoundCloud, ikon Material tanpa emoji), tempel otomatis
   dari clipboard (opt-in), tile Quick Settings, App Shortcuts.
+- **Pengaturan**: menu per-halaman (Penyimpanan, Output, Antrean, Jadwal,
+  Tampilan, Privasi, Lanjutan, Engine, Bantuan, Background, Legal).
 - **Privasi**: kunci PIN + biometrik, mode incognito (tanpa riwayat), proxy
   (bisa Tor/Orbot), User-Agent kustom, argumen yt-dlp/FFmpeg kustom,
   hapus metadata, log + diagnostik, backup/restore pengaturan.
@@ -54,7 +58,7 @@ $env:JAVA_HOME="C:\Program Files\Java\jdk-17.0.12"
 ```
 
 Terverifikasi: `assembleDebug`, `assembleRelease` (R8 + release lint), dan
-**50 unit test lolos, 0 gagal**. APK rilis (ABI split): arm64 ~57 MB,
+**54 unit test lolos, 0 gagal**. APK rilis (ABI split): arm64 ~57 MB,
 armeabi-v7a ~51 MB (berisi Python + FFmpeg + yt-dlp natives).
 
 Rilis:

@@ -67,6 +67,7 @@ class SettingsRepositoryImpl(private val context: Context) : SettingsRepository 
     private val rssKey = stringPreferencesKey("rss_channel")
     private val rssAutoKey = booleanPreferencesKey("rss_auto")
     private val profilesKey = stringPreferencesKey("profiles_json")
+    private val simpleKey = booleanPreferencesKey("simple_mode")
 
     override fun observeDestinationUri(): Flow<String?> =
         context.prefs.data.map { it[destKey] }
@@ -351,6 +352,13 @@ class SettingsRepositoryImpl(private val context: Context) : SettingsRepository 
 
     override suspend fun setProfilesJson(json: String) {
         context.prefs.edit { it[profilesKey] = json.take(20000) }
+    }
+
+    override suspend fun getSimpleMode(): Boolean =
+        context.prefs.data.map { it[simpleKey] != false }.first()
+
+    override suspend fun setSimpleMode(enabled: Boolean) {
+        context.prefs.edit { it[simpleKey] = enabled }
     }
 
     override suspend fun clearAll() {

@@ -138,6 +138,72 @@ class FeatureTests {
         assertEquals("Musik", back[0].name)
     }
 
+    // ------------------------------------------------- link edge cases
+
+    @Test fun youtubeVariantsNormalize() {
+        assertEquals(
+            "https://www.youtube.com/watch?v=abcdEFGH123",
+            UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/shorts/abcdEFGH123"),
+        )
+        assertEquals(
+            "https://www.youtube.com/watch?v=abcdEFGH123",
+            UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/live/abcdEFGH123?si=x"),
+        )
+        assertEquals(
+            "https://www.youtube.com/watch?v=abcdEFGH123",
+            UrlValidator.extractFirstSupportedUrl("https://www.youtube.com/embed/abcdEFGH123"),
+        )
+        assertEquals(
+            "https://www.youtube.com/watch?v=abcdEFGH123&t=30",
+            UrlValidator.extractFirstSupportedUrl("https://youtu.be/abcdEFGH123?t=30&si=x"),
+        )
+        // Tracking params dropped, playback params kept.
+        assertEquals(
+            "https://www.youtube.com/watch?v=abcdEFGH123&list=PLabc",
+            UrlValidator.extractFirstSupportedUrl(
+                "https://www.youtube.com/watch?v=abcdEFGH123&list=PLabc&si=zzz&feature=share&fbclid=1",
+            ),
+        )
+    }
+
+    @Test fun genericSitesAccepted() {
+        assertTrue(InputParser.parse("https://www.tiktok.com/@akun/video/7000000000000000000") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://vt.tiktok.com/AbCdEf/") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://www.instagram.com/reel/C123abc/") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://fb.watch/xyz123/") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://x.com/akun/status/123456") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://soundcloud.com/artis/judul") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://artis.bandcamp.com/track/judul") is ParsedInput.Video)
+        assertTrue(InputParser.parse("https://vimeo.com/123456789") is ParsedInput.Video)
+        // Surrounding prose tolerated, trailing punctuation trimmed.
+        assertTrue(InputParser.parse("nih lagunya: https://youtu.be/k08A4cjVI8k.") is ParsedInput.Video)
+        assertTrue(InputParser.parse("(https://youtu.be/k08A4cjVI8k)") is ParsedInput.Video)
+    }
+
+    @Test fun batchAndPlaylistRouting() {
+        val batch = InputParser.parse("https://youtu.be/k08A4cjVI8k https://soundcloud.com/a/b")
+        assertTrue(batch is ParsedInput.Batch)
+        assertEquals(2, (batch as ParsedInput.Batch).urls.size)
+        assertTrue(
+            InputParser.parse("https://www.youtube.com/playlist?list=PL1234567890abcdef") is ParsedInput.Playlist,
+        )
+        assertTrue(InputParser.parse("https://music.youtube.com/watch?v=k08A4cjVI8k") is ParsedInput.Video)
+        // Plain text stays search, homepage stays unsupported.
+        assertTrue(InputParser.parse("tuhan memanggil namamu") is ParsedInput.Search)
+        assertEquals(ParsedInput.Unsupported, InputParser.parse("https://www.youtube.com/"))
+    }
+
+    @Test fun quickSiteMatching() {
+        val tiktok = com.example.yt2mp3.data.util.SupportedSites.quick.first { it.name == "TikTok" }
+        val urls = com.example.yt2mp3.data.util.SupportedSites.matchingUrls(
+            tiktok, "nih https://www.tiktok.com/@a/video/1 dan https://youtu.be/k08A4cjVI8k",
+        )
+        assertEquals(listOf("https://www.tiktok.com/@a/video/1"), urls)
+        assertTrue(
+            com.example.yt2mp3.data.util.SupportedSites.matchingUrls(tiktok, "https://youtu.be/k08A4cjVI8k").isEmpty(),
+        )
+    }
+
     // ------------------------------------------------------------- TimeFormat
 
     @Test fun parsesTimes() {

@@ -92,6 +92,7 @@ data class HomeScreenState(
     val skipExisting: Boolean = false,
     val subfolderAuto: Boolean = true,
     val showAdvanced: Boolean = false,
+    val simpleMode: Boolean = true,
     val profiles: List<DownloadProfile> = emptyList(),
     val activeProfile: String? = null,
 ) {
@@ -178,8 +179,9 @@ class HomeViewModel(app: Application) : ViewModel() {
             val post = runCatching { yt.settings.getPostFlags() }.getOrDefault(PostOptions())
             val skip = runCatching { yt.settings.getSkipExisting() }.getOrDefault(false)
             val sub = runCatching { yt.settings.getSubfolderPerPlaylist() }.getOrDefault(true)
+            val simple = runCatching { yt.settings.getSimpleMode() }.getOrDefault(true)
             val profiles = Profiles.decode(runCatching { yt.settings.getProfilesJson() }.getOrDefault(""))
-            _state.update { it.copy(post = post, skipExisting = skip, subfolderAuto = sub, profiles = profiles) }
+            _state.update { it.copy(post = post, skipExisting = skip, subfolderAuto = sub, simpleMode = simple, profiles = profiles) }
         }
         // Track the enqueued item through the queue to terminal state.
         viewModelScope.launch {
@@ -422,6 +424,10 @@ class HomeViewModel(app: Application) : ViewModel() {
 
     fun toggleAdvanced() {
         _state.update { it.copy(showAdvanced = !it.showAdvanced) }
+    }
+
+    fun showNotice(msg: String) {
+        _state.update { it.copy(notice = msg.take(300)) }
     }
 
     /** Opens the current input/preview as a playlist/channel (fallback for generic links). */
